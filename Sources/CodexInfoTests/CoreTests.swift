@@ -706,6 +706,32 @@ func registerCoreTests() {
         context.expectEqual(prunedEntries?.count, 0)
     }
 
+    test("AccountUsageService uses official today total and local cumulative") { context in
+        let today = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let http = MockHTTPClient(response: HTTPResponse(
+            data: #"{"days":[{"date":"2026-10-24","total_tokens":1234}]}"#.data(using: .utf8)!,
+            statusCode: 200
+        ))
+        let official = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let local = StubLocalAccount(today: 100, total: 999)
+        let service = AccountUsageService(official: official, sessions: local)
+        let snapshot = await service.accountSnapshot(now: today)
+        context.expectEqual(snapshot?.todayTokens, 1234)
+        context.expectEqual(snapshot?.totalTokens, 999)
+    }
+
+    test("AccountUsageService falls back to local totals") { context in
+        let today = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let http = MockHTTPClient(error: HTTPError.status(500))
+        let official = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let local = StubLocalAccount(today: 100, total: 999)
+        let service = AccountUsageService(official: official, sessions: local)
+        let snapshot = await service.accountSnapshot(now: today)
+        context.expectEqual(snapshot?.todayTokens, 100)
+        context.expectEqual(snapshot?.totalTokens, 999)
+        context.expectEqual(snapshot?.source, "local")
+    }
+
     test("SessionIndexer does not duplicate events of a session that grows while it is read") { context in
         // The recorded offset used to be the size observed before the read. A session file that
         // grows while it is read therefore left the offset behind the consumed bytes and the
@@ -821,6 +847,14 @@ struct StubQuotaFallback: QuotaFallbackProviding {
 struct StubResetCreditFallback: ResetCreditFallbackProviding {
     let snapshot: ResetCreditsSnapshot?
     func fallbackCredits(now: Date) async -> ResetCreditsSnapshot? { snapshot }
+}
+
+struct StubLocalAccount: AccountTotalsProviding {
+    let today: Int
+    let total: Int
+    func accountTotals(now: Date, calendar: Calendar) async -> (today: Int, total: Int) {
+        (today, total)
+    }
 }
 
 final class FakeAppServerTransport: AppServerTransport, @unchecked Sendable {
