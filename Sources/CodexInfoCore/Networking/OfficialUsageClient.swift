@@ -49,35 +49,10 @@ public struct OfficialUsageClient: Sendable {
         let planType = object["plan_type"] as? String ?? object["planType"] as? String
         let rateLimitsObject = object["rate_limits"] as? [String: Any]
             ?? object["rateLimits"] as? [String: Any]
-        let rateLimits = rateLimitsObject.flatMap(Self.decodeSnapshot)
+        let rateLimits = rateLimitsObject.flatMap(RateLimitPayloadDecoder.snapshot)
         let byIDObject = object["rate_limits_by_limit_id"] as? [String: Any]
             ?? object["rateLimitsByLimitId"] as? [String: Any]
-        var byID: [String: RateLimitSnapshot] = [:]
-        for (key, value) in byIDObject ?? [:] {
-            if let dict = value as? [String: Any], let snapshot = Self.decodeSnapshot(dict) {
-                byID[key] = snapshot
-            }
-        }
+        let byID = byIDObject.map(RateLimitPayloadDecoder.snapshotMap) ?? [:]
         return OfficialUsage(planType: planType, rateLimits: rateLimits, rateLimitsByLimitID: byID)
-    }
-
-    private static func decodeSnapshot(_ object: [String: Any]) -> RateLimitSnapshot? {
-        guard object["limit_id"] != nil || object["limitId"] != nil || object["primary"] != nil else { return nil }
-        return RateLimitSnapshot(
-            limitId: object["limit_id"] as? String ?? object["limitId"] as? String,
-            primary: decodeWindow(object["primary"] as? [String: Any]),
-            secondary: decodeWindow(object["secondary"] as? [String: Any]),
-            planType: object["plan_type"] as? String ?? object["planType"] as? String
-        )
-    }
-
-    private static func decodeWindow(_ object: [String: Any]?) -> RateLimitWindow? {
-        guard let object else { return nil }
-        guard let used = object["used_percent"] as? Double ?? (object["used_percent"] as? NSNumber)?.doubleValue else { return nil }
-        let duration = (object["window_minutes"] as? NSNumber)?.doubleValue
-            ?? (object["windowDurationMins"] as? NSNumber)?.doubleValue
-        let resets = (object["resets_at"] as? NSNumber)?.intValue
-            ?? (object["resetsAt"] as? NSNumber)?.intValue
-        return RateLimitWindow(usedPercent: used, windowDurationMins: duration, resetsAt: resets)
     }
 }

@@ -356,6 +356,22 @@ func registerCoreTests() {
         let rate = OutputRateCalculator.rate(for: turn)
         context.expectTrue(abs((rate?.tokensPerSecond ?? 0) - 28.5714) < 0.01)
     }
+
+    test("AppServerQuotaFallback reads weekly quota from app-server") { context in
+        let fake = FakeAppServerTransport(result: [
+            "rateLimits": [
+                "limitId": "codex",
+                "primary": ["used_percent": 10, "window_minutes": 300, "resets_at": 100],
+                "secondary": ["used_percent": 30, "window_minutes": 10080, "resets_at": 200],
+            ],
+        ])
+        let client = CodexAppServerClient(transport: fake)
+        let fallback = AppServerQuotaFallback(client: client)
+        let snapshot = await fallback.fallbackQuota(now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(snapshot?.weeklyRemainingPercent, 70)
+        context.expectEqual(snapshot?.source, .appServer)
+        context.expectEqual(fake.requests.map(\.method), ["initialize", "account/rateLimits/read"])
+    }
 }
 
 final class MockHTTPClient: HTTPClient, @unchecked Sendable {
@@ -388,4 +404,21 @@ struct StubQuotaFallback: QuotaFallbackProviding {
 struct StubResetCreditFallback: ResetCreditFallbackProviding {
     let snapshot: ResetCreditsSnapshot?
     func fallbackCredits(now: Date) async -> ResetCreditsSnapshot? { snapshot }
+}
+
+final class FakeAppServerTransport: AppServerTransport, @unchecked Sendable {
+    struct Request { let method: String; let params: [String: Any] }
+    let result: [String: Any]
+    private(set) var requests: [Request] = []
+
+    init(result: [String: Any]) { self.result = result }
+
+    func request(method: String, params: [String: Any]) async throws -> [String: Any] {
+        requests.append(Request(method: method, params: params))
+        if method == "initialize" { return [:] }
+        return result
+    }
+
+    func notify(method: String, params: [String: Any]) async throws {}
+    func close() {}
 }
