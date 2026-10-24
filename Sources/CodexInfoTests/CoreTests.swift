@@ -507,6 +507,40 @@ func registerCoreTests() {
         let result = try await transport.request(method: "initialize", params: [:])
         context.expectEqual(result["ok"] as? Bool, true)
     }
+
+    test("SessionIndexer picks the newest session and reports context") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let older = directory.appendingPathComponent("older.jsonl")
+        let newer = directory.appendingPathComponent("newer.jsonl")
+        let threadSettings = #"{"timestamp":"2026-10-24T02:48:18.321Z","type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model":"gpt-6.1-sol","model_provider_id":"openai","service_tier":"default","reasoning_effort":"xhigh"}}}"# + "\n"
+        let contextLine = #"{"timestamp":"2026-10-24T02:48:23.310Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":120},"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":120},"model_context_window":475000}}}"# + "\n"
+        let newerContent = threadSettings
+            + #"{"timestamp":"2026-10-24T02:48:19.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","started_at":1792810096}}"# + "\n"
+            + #"{"timestamp":"2026-10-24T02:48:20.000Z","type":"token_usage_record","payload":{"turn_id":"turn-1","response_id":"resp-1","usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":120},"turn_token_usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":120},"thread_token_usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":120}}}"# + "\n"
+            + contextLine
+        try "".write(to: older, atomically: true, encoding: .utf8)
+        try newerContent.write(to: newer, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 100)], ofItemAtPath: older.path)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 200)], ofItemAtPath: newer.path)
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let indexes = await indexer.scan()
+        context.expectEqual(indexes.count, 2)
+        let latest = indexes.max { $0.modifiedAt < $1.modifiedAt }
+        context.expectEqual(latest?.path.hasSuffix("newer.jsonl"), true)
+        context.expectEqual(latest?.isActive, true)
+        context.expectEqual(latest?.contextTokens, 120)
+        context.expectEqual(latest?.contextWindow, 475000)
+
+        let repository = SessionRepository(indexer: indexer)
+        let snapshot = await repository.currentSnapshot(now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(snapshot?.label, "当前会话")
+        context.expectEqual(snapshot?.contextTokens, 120)
+        context.expectEqual(snapshot?.totalTokens, 120)
+    }
 }
 
 final class MockHTTPClient: HTTPClient, @unchecked Sendable {

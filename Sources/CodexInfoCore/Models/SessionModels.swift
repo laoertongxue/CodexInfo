@@ -128,3 +128,42 @@ public enum SessionEvent: Equatable, Sendable {
     case threadSettings(ThreadSettingsEvent)
     case compacted
 }
+
+public struct SessionIndex: Codable, Equatable, Sendable {
+    public let path: String
+    public let modifiedAt: Date
+    public let turns: [TurnMetrics]
+    public let isActive: Bool
+    public let model: String?
+    public let reasoningEffort: String?
+    public let serviceTier: String?
+    public let contextTokens: Int?
+    public let contextWindow: Int?
+    public let lastRateLimits: RateLimitSnapshot?
+    public let selectedModel: String?
+    public let selectedEffort: String?
+    public let selectedServiceTier: String?
+    public let routeMismatch: Bool
+}
+
+public struct SessionSnapshot: Codable, Equatable, Sendable {
+    public let isActive: Bool
+    public let label: String
+    public let model: String?
+    public let effort: String?
+    public let serviceTier: String?
+    public let contextTokens: Int?
+    public let contextWindow: Int?
+    public let totalTokens: Int?
+    public let inputTokens: Int?
+    public let outputTokens: Int?
+    public let cachedInputTokens: Int?
+    public let reasoningOutputTokens: Int?
+    public let outputTokensPerSecond: Double?
+    public let medianOutputTokensPerSecond: Double?
+    public let ttftMs: Double?
+    public let turnCount: Int
+    public let routeMismatch: Bool
+}
+
+extension TokenCountEvent: Codable {}

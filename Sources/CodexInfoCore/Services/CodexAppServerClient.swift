@@ -100,6 +100,26 @@ public struct AppServerQuotaFallback: QuotaFallbackProviding {
     }
 }
 
+public struct SessionQuotaFallback: QuotaFallbackProviding {
+    private let repository: SessionRepository
+
+    public init(repository: SessionRepository) {
+        self.repository = repository
+    }
+
+    public func fallbackQuota(now: Date) async -> QuotaSnapshot? {
+        guard let limits = await repository.latestRateLimits(),
+              let weekly = RateLimitWindowSelector.weekly(from: limits) else { return nil }
+        return QuotaSnapshot(
+            planType: limits.planType,
+            weeklyRemainingPercent: weekly.remainingPercent,
+            weeklyResetsAt: weekly.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+            source: .session,
+            fetchedAt: now
+        )
+    }
+}
+
 public struct CompositeQuotaFallback: QuotaFallbackProviding {
     private let providers: [QuotaFallbackProviding]
 
