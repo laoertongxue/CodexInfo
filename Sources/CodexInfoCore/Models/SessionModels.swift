@@ -144,6 +144,38 @@ public struct SessionIndex: Codable, Equatable, Sendable {
     public let selectedEffort: String?
     public let selectedServiceTier: String?
     public let routeMismatch: Bool
+
+    public init(
+        path: String,
+        modifiedAt: Date,
+        turns: [TurnMetrics],
+        isActive: Bool,
+        model: String?,
+        reasoningEffort: String?,
+        serviceTier: String?,
+        contextTokens: Int?,
+        contextWindow: Int?,
+        lastRateLimits: RateLimitSnapshot?,
+        selectedModel: String?,
+        selectedEffort: String?,
+        selectedServiceTier: String?,
+        routeMismatch: Bool
+    ) {
+        self.path = path
+        self.modifiedAt = modifiedAt
+        self.turns = turns
+        self.isActive = isActive
+        self.model = model
+        self.reasoningEffort = reasoningEffort
+        self.serviceTier = serviceTier
+        self.contextTokens = contextTokens
+        self.contextWindow = contextWindow
+        self.lastRateLimits = lastRateLimits
+        self.selectedModel = selectedModel
+        self.selectedEffort = selectedEffort
+        self.selectedServiceTier = selectedServiceTier
+        self.routeMismatch = routeMismatch
+    }
 }
 
 public struct SessionSnapshot: Codable, Equatable, Sendable {
@@ -164,6 +196,44 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public let ttftMs: Double?
     public let turnCount: Int
     public let routeMismatch: Bool
+
+    public init(
+        isActive: Bool,
+        label: String,
+        model: String?,
+        effort: String?,
+        serviceTier: String?,
+        contextTokens: Int?,
+        contextWindow: Int?,
+        totalTokens: Int?,
+        inputTokens: Int?,
+        outputTokens: Int?,
+        cachedInputTokens: Int?,
+        reasoningOutputTokens: Int?,
+        outputTokensPerSecond: Double?,
+        medianOutputTokensPerSecond: Double?,
+        ttftMs: Double?,
+        turnCount: Int,
+        routeMismatch: Bool
+    ) {
+        self.isActive = isActive
+        self.label = label
+        self.model = model
+        self.effort = effort
+        self.serviceTier = serviceTier
+        self.contextTokens = contextTokens
+        self.contextWindow = contextWindow
+        self.totalTokens = totalTokens
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.reasoningOutputTokens = reasoningOutputTokens
+        self.outputTokensPerSecond = outputTokensPerSecond
+        self.medianOutputTokensPerSecond = medianOutputTokensPerSecond
+        self.ttftMs = ttftMs
+        self.turnCount = turnCount
+        self.routeMismatch = routeMismatch
+    }
 }
 
 extension TokenCountEvent: Codable {}

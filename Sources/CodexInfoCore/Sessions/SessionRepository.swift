@@ -14,18 +14,25 @@ public actor SessionRepository: SessionSnapshotProviding {
     }
 
     public func currentSnapshot(now: Date = Date()) async -> SessionSnapshot? {
-        cache = await indexer.scan()
+        let (indexes, threadTotals) = await indexer.scanWithTotals()
+        cache = indexes
         guard let latest = cache.max(by: { $0.modifiedAt < $1.modifiedAt }) else { return nil }
         let lastTurn = latest.turns.last
         let rate = lastTurn.flatMap(OutputRateCalculator.rate)
-        let sameModel = latest.turns.filter {
-            $0.model == latest.model && $0.reasoningEffort == latest.reasoningEffort
+        // The median window only covers turns that ran on the same route.
+        let sameRoute = latest.turns.filter {
+            $0.model == latest.model
+                && $0.reasoningEffort == latest.reasoningEffort
+                && $0.serviceTier == latest.serviceTier
         }
-        let median = OutputRateCalculator.medianRate(sameModel)
+        let median = OutputRateCalculator.medianRate(sameRoute)
         let totalInput = latest.turns.reduce(0) { $0 + $1.inputTokens }
         let totalOutput = latest.turns.reduce(0) { $0 + $1.outputTokens }
         let totalCached = latest.turns.reduce(0) { $0 + $1.cachedInputTokens }
         let totalReasoning = latest.turns.reduce(0) { $0 + $1.reasoningOutputTokens }
+        // The thread total is authoritative when present; otherwise fall back to the
+        // per-response sum, which is already deduplicated by response id.
+        let totalTokens = threadTotals[latest.path] ?? (totalInput + totalOutput)
         return SessionSnapshot(
             isActive: latest.isActive,
             label: latest.isActive ? "当前会话" : "最近会话",
@@ -34,7 +41,7 @@ public actor SessionRepository: SessionSnapshotProviding {
             serviceTier: latest.serviceTier,
             contextTokens: latest.contextTokens,
             contextWindow: latest.contextWindow,
-            totalTokens: totalInput + totalOutput,
+            totalTokens: totalTokens,
             inputTokens: totalInput,
             outputTokens: totalOutput,
             cachedInputTokens: totalCached,

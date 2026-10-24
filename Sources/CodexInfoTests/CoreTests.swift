@@ -541,6 +541,254 @@ func registerCoreTests() {
         context.expectEqual(snapshot?.contextTokens, 120)
         context.expectEqual(snapshot?.totalTokens, 120)
     }
+
+    test("SessionIndex and SessionSnapshot are constructible from the test module") { context in
+        let index = SessionIndex(
+            path: "/tmp/session.jsonl",
+            modifiedAt: Date(timeIntervalSince1970: 1_000),
+            turns: [],
+            isActive: true,
+            model: "gpt-6.1-sol",
+            reasoningEffort: "xhigh",
+            serviceTier: "default",
+            contextTokens: 120,
+            contextWindow: 475_000,
+            lastRateLimits: nil,
+            selectedModel: "gpt-6.1-sol",
+            selectedEffort: "xhigh",
+            selectedServiceTier: "default",
+            routeMismatch: false
+        )
+        let snapshot = SessionSnapshot(
+            isActive: true,
+            label: "当前会话",
+            model: "gpt-6.1-sol",
+            effort: "xhigh",
+            serviceTier: "default",
+            contextTokens: 120,
+            contextWindow: 475_000,
+            totalTokens: 120,
+            inputTokens: 100,
+            outputTokens: 20,
+            cachedInputTokens: 80,
+            reasoningOutputTokens: 0,
+            outputTokensPerSecond: 42.3,
+            medianOutputTokensPerSecond: 45.1,
+            ttftMs: 3_900,
+            turnCount: 1,
+            routeMismatch: false
+        )
+        context.expectEqual(index.path, "/tmp/session.jsonl")
+        context.expectEqual(index.contextTokens, 120)
+        context.expectEqual(index.contextWindow, 475_000)
+        context.expectEqual(index.isActive, true)
+        context.expectEqual(snapshot.label, "当前会话")
+        context.expectEqual(snapshot.totalTokens, 120)
+        context.expectEqual(snapshot.turnCount, 1)
+    }
+
+    test("SessionIndexer re-reads a session rewritten with the same byte length") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("session.jsonl")
+
+        func sessionContent(output: Int, total: Int) -> String {
+            let usage = "{\"timestamp\":\"2026-10-24T02:48:20.000Z\",\"type\":\"token_usage_record\",\"payload\":{\"turn_id\":\"turn-1\",\"response_id\":\"resp-1\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":\(output),\"reasoning_output_tokens\":0,\"total_tokens\":\(total)},\"turn_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":\(output),\"reasoning_output_tokens\":0,\"total_tokens\":\(total)},\"thread_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":\(output),\"reasoning_output_tokens\":0,\"total_tokens\":\(total)}}}"
+            let settings = "{\"timestamp\":\"2026-10-24T02:48:18.321Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"thread_settings_applied\",\"thread_settings\":{\"model\":\"gpt-6.1-sol\",\"model_provider_id\":\"openai\",\"service_tier\":\"default\",\"reasoning_effort\":\"xhigh\"}}}"
+            let started = "{\"timestamp\":\"2026-10-24T02:48:19.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-1\",\"started_at\":1792810096}}"
+            let count = "{\"timestamp\":\"2026-10-24T02:48:23.310Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":\(output),\"reasoning_output_tokens\":0,\"total_tokens\":\(total)},\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":\(output),\"reasoning_output_tokens\":0,\"total_tokens\":\(total)},\"model_context_window\":475000}}}"
+            return [settings, started, usage, count].map { $0 + "\n" }.joined()
+        }
+
+        let original = sessionContent(output: 20, total: 120)
+        let rewritten = sessionContent(output: 21, total: 121)
+        context.expectEqual(rewritten.utf8.count, original.utf8.count)
+
+        try original.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_000)], ofItemAtPath: file.path)
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let first = await indexer.scan()
+        context.expectEqual(first.count, 1)
+        context.expectEqual(first.first?.contextTokens, 120)
+        context.expectEqual(first.first?.turns.first?.outputTokens, 20)
+
+        try rewritten.write(to: file, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 2_000)], ofItemAtPath: file.path)
+        let second = await indexer.scan()
+        context.expectEqual(second.count, 1)
+        context.expectEqual(second.first?.contextTokens, 121)
+        context.expectEqual(second.first?.turns.first?.outputTokens, 21)
+    }
+
+    test("SessionIndexer counts appended events exactly once") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("session.jsonl")
+
+        let head = "{\"timestamp\":\"2026-10-24T02:48:19.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-1\",\"started_at\":1792810096}}\n"
+            + "{\"timestamp\":\"2026-10-24T02:48:20.000Z\",\"type\":\"token_usage_record\",\"payload\":{\"turn_id\":\"turn-1\",\"response_id\":\"resp-1\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":20,\"reasoning_output_tokens\":0,\"total_tokens\":120},\"turn_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":20,\"reasoning_output_tokens\":0,\"total_tokens\":120},\"thread_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":20,\"reasoning_output_tokens\":0,\"total_tokens\":120}}}\n"
+            + "{\"timestamp\":\"2026-10-24T02:48:21.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"turn_id\":\"turn-1\",\"item\":{\"type\":\"CommandExecution\"},\"started_at_ms\":1000,\"completed_at_ms\":2000}}\n"
+            + "{\"timestamp\":\"2026-10-24T02:48:22.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\",\"turn_id\":\"turn-1\",\"duration_ms\":5000,\"time_to_first_token_ms\":500}}\n"
+        try head.write(to: file, atomically: true, encoding: .utf8)
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let first = await indexer.scan()
+        context.expectEqual(first.count, 1)
+        context.expectEqual(first.first?.turns.first?.outputTokens, 20)
+        context.expectEqual(first.first?.turns.first?.toolCallCount, 1)
+
+        let appended = "{\"timestamp\":\"2026-10-24T02:48:23.000Z\",\"type\":\"token_usage_record\",\"payload\":{\"turn_id\":\"turn-1\",\"response_id\":\"resp-2\",\"usage\":{\"input_tokens\":10,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":5,\"reasoning_output_tokens\":0,\"total_tokens\":15},\"turn_token_usage\":{\"input_tokens\":10,\"cached_input_tokens\":0,\"cache_write_input_tokens\":0,\"output_tokens\":5,\"reasoning_output_tokens\":0,\"total_tokens\":15},\"thread_token_usage\":{\"input_tokens\":110,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":25,\"reasoning_output_tokens\":0,\"total_tokens\":135}}}\n"
+            + "{\"timestamp\":\"2026-10-24T02:48:24.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"turn_id\":\"turn-1\",\"item\":{\"type\":\"McpToolCall\"},\"started_at_ms\":3000,\"completed_at_ms\":4000}}\n"
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data(appended.utf8))
+        try handle.close()
+
+        let second = await indexer.scan()
+        context.expectEqual(second.count, 1)
+        context.expectEqual(second.first?.turns.first?.outputTokens, 25)
+        context.expectEqual(second.first?.turns.first?.toolCallCount, 2)
+
+        // A third scan must not re-read or duplicate the appended region.
+        let third = await indexer.scan()
+        context.expectEqual(third.count, 1)
+        context.expectEqual(third.first?.turns.first?.outputTokens, 25)
+        context.expectEqual(third.first?.turns.first?.toolCallCount, 2)
+    }
+
+    test("SessionRepository prefers thread token totals and falls back to thread usage") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("session.jsonl")
+
+        let content = "{\"timestamp\":\"2026-10-24T02:48:19.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-1\",\"started_at\":1792810096}}\n"
+            + "{\"timestamp\":\"2026-10-24T02:48:20.000Z\",\"type\":\"token_usage_record\",\"payload\":{\"turn_id\":\"turn-1\",\"response_id\":\"resp-1\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":20,\"reasoning_output_tokens\":0,\"total_tokens\":120},\"turn_token_usage\":{\"input_tokens\":200,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":100,\"reasoning_output_tokens\":0,\"total_tokens\":300},\"thread_token_usage\":{\"input_tokens\":200,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":100,\"reasoning_output_tokens\":0,\"total_tokens\":300}}}\n"
+            + "{\"timestamp\":\"2026-10-24T02:48:23.310Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"model_context_window\":475000}}}\n"
+        try content.write(to: file, atomically: true, encoding: .utf8)
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let indexes = await indexer.scan()
+        // `last_token_usage` is missing, so the context falls back to the thread total.
+        context.expectEqual(indexes.first?.contextTokens, 300)
+        context.expectEqual(indexes.first?.contextWindow, 475_000)
+
+        let repository = SessionRepository(indexer: indexer)
+        let snapshot = await repository.currentSnapshot(now: Date(timeIntervalSince1970: 1_790_000_000))
+        // The thread total wins over the deduplicated per-response sum of 120.
+        context.expectEqual(snapshot?.totalTokens, 300)
+        context.expectEqual(snapshot?.contextTokens, 300)
+        context.expectEqual(snapshot?.inputTokens, 100)
+        context.expectEqual(snapshot?.outputTokens, 20)
+    }
+
+    test("SessionIndexer prunes cache entries of deleted sessions") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("session.jsonl")
+        let cacheURL = directory.appendingPathComponent("cache.json")
+        let content = "{\"timestamp\":\"2026-10-24T02:48:19.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-1\",\"started_at\":1792810096}}\n"
+        try content.write(to: file, atomically: true, encoding: .utf8)
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: cacheURL)
+        let first = await indexer.scan()
+        context.expectEqual(first.count, 1)
+        let cachedEntries = try JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? [String: Any]
+        context.expectEqual(cachedEntries?.count, 1)
+
+        try FileManager.default.removeItem(at: file)
+        let second = await indexer.scan()
+        context.expectEqual(second.count, 0)
+        let prunedEntries = try JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? [String: Any]
+        context.expectEqual(prunedEntries?.count, 0)
+    }
+
+    test("SessionIndexer does not duplicate events of a session that grows while it is read") { context in
+        // The recorded offset used to be the size observed before the read. A session file that
+        // grows while it is read therefore left the offset behind the consumed bytes and the
+        // next scan re-parsed the overlap, duplicating the events in it.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("session.jsonl")
+
+        let filler = String(repeating: "x", count: 5_000)
+        var content = "{\"timestamp\":\"2026-10-24T02:48:19.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"turn_id\":\"turn-1\",\"item\":{\"type\":\"CommandExecution\"},\"started_at_ms\":1000,\"completed_at_ms\":2000}}\n"
+        content += String(repeating: filler + "\n", count: 1_000)
+        try content.write(to: file, atomically: true, encoding: .utf8)
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let appender = SessionAppender(url: file)
+        var expectedToolCalls = 1
+        for _ in 0..<2 {
+            appender.start()
+            _ = await indexer.scan()
+            await appender.stop()
+            expectedToolCalls += appender.appendedCount
+            let scanned = await indexer.scan()
+            context.expectEqual(scanned.first?.turns.first?.toolCallCount, expectedToolCalls)
+        }
+    }
+}
+
+/// Appends session events to a file while the indexer reads it.
+final class SessionAppender: @unchecked Sendable {
+    private static let filler = String(repeating: "x", count: 5_000)
+    private static let lineLimit = 2_000
+
+    private let lock = NSLock()
+    private let url: URL
+    private var handle: FileHandle?
+    private var task: Task<Void, Never>?
+    private var count = 0
+
+    init(url: URL) { self.url = url }
+
+    /// Number of events appended since the last `start()`.
+    var appendedCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func start() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard task == nil, let handle = try? FileHandle(forWritingTo: url) else { return }
+        try? handle.seekToEnd()
+        self.handle = handle
+        count = 0
+        task = Task { [weak self] in
+            while !Task.isCancelled {
+                self?.appendLine()
+            }
+        }
+    }
+
+    func stop() async {
+        let (running, openHandle) = lock.withLock { () -> (Task<Void, Never>?, FileHandle?) in
+            let running = task
+            let openHandle = handle
+            task = nil
+            handle = nil
+            return (running, openHandle)
+        }
+        running?.cancel()
+        await running?.value
+        try? openHandle?.close()
+    }
+
+    private func appendLine() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let handle, count < Self.lineLimit else { return }
+        let line = "{\"timestamp\":\"2026-10-24T02:48:25.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"item_completed\",\"turn_id\":\"turn-1\",\"item\":{\"type\":\"McpToolCall\"},\"started_at_ms\":5000,\"completed_at_ms\":6000,\"pad\":\"" + Self.filler + "\"}}\n"
+        try? handle.write(contentsOf: Data(line.utf8))
+        count += 1
+    }
 }
 
 final class MockHTTPClient: HTTPClient, @unchecked Sendable {
