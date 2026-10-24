@@ -1,6 +1,7 @@
 import Foundation
 
 registerCoreTests()
+registerMCPTests()
 
 let arguments = CommandLine.arguments
 let filter: String?
