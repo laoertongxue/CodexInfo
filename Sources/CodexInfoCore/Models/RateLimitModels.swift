@@ -52,12 +52,18 @@ public enum RateLimitPayloadDecoder {
     }
 
     private static func window(_ object: [String: Any]?) -> RateLimitWindow? {
-        guard let object, let used = (object["used_percent"] as? NSNumber)?.doubleValue else { return nil }
+        guard let object else { return nil }
+        let used = number(object["used_percent"]) ?? number(object["usedPercent"])
+        guard let used else { return nil }
         return RateLimitWindow(
-            usedPercent: used,
-            windowDurationMins: (object["window_minutes"] as? NSNumber)?.doubleValue,
-            resetsAt: (object["resets_at"] as? NSNumber)?.intValue
+            usedPercent: used.doubleValue,
+            windowDurationMins: (number(object["window_minutes"]) ?? number(object["windowDurationMins"]))?.doubleValue,
+            resetsAt: (number(object["resets_at"]) ?? number(object["resetsAt"]))?.intValue
         )
+    }
+
+    private static func number(_ value: Any?) -> NSNumber? {
+        value as? NSNumber
     }
 }
 

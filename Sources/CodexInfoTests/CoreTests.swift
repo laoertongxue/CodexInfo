@@ -372,6 +372,141 @@ func registerCoreTests() {
         context.expectEqual(snapshot?.source, .appServer)
         context.expectEqual(fake.requests.map(\.method), ["initialize", "account/rateLimits/read"])
     }
+
+    test("Quota official client decodes camelCase rate limit fields") { context in
+        let http = MockHTTPClient(response: HTTPResponse(
+            data: #"{"planType":"pro","rateLimits":{"limitId":"codex","primary":{"usedPercent":16,"windowDurationMins":10080,"resetsAt":200},"secondary":null}}"#.data(using: .utf8)!,
+            statusCode: 200
+        ))
+        let client = OfficialUsageClient(
+            http: http,
+            credentials: StubCredentials(token: "tok_test"),
+            baseURL: URL(string: "https://chatgpt.com/backend-api")!
+        )
+        let usage = try await client.fetchUsage()
+        let weekly = usage.rateLimits.flatMap(RateLimitWindowSelector.weekly)
+        context.expectEqual(weekly?.remainingPercent, 84)
+        context.expectEqual(weekly?.windowDurationMins, 10_080)
+        context.expectEqual(weekly?.resetsAt, 200)
+        context.expectEqual(usage.rateLimits?.limitId, "codex")
+    }
+
+    test("AppServer client initializes exactly once for concurrent reads") { context in
+        let fake = FakeAppServerTransport(
+            result: [
+                "rateLimits": [
+                    "limitId": "codex",
+                    "primary": ["used_percent": 10, "window_minutes": 10080, "resets_at": 100],
+                ],
+            ],
+            initializeDelay: 0.05
+        )
+        let client = CodexAppServerClient(transport: fake)
+        async let first = client.readRateLimits()
+        async let second = client.readRateLimits()
+        let (a, b) = try await (first, second)
+        context.expectEqual(a.rateLimits?.limitId, "codex")
+        context.expectEqual(b.rateLimits?.limitId, "codex")
+        context.expectEqual(fake.requests.filter { $0.method == "initialize" }.count, 1)
+        context.expectEqual(fake.requests.filter { $0.method == "account/rateLimits/read" }.count, 2)
+    }
+
+    test("AppServer client retries initialization after failure") { context in
+        let fake = FakeAppServerTransport(
+            result: [
+                "rateLimits": [
+                    "limitId": "codex",
+                    "primary": ["used_percent": 10, "window_minutes": 10080, "resets_at": 100],
+                ],
+            ],
+            initializeFailures: 1
+        )
+        let client = CodexAppServerClient(transport: fake)
+        var firstError: Error?
+        do {
+            _ = try await client.readRateLimits()
+        } catch {
+            firstError = error
+        }
+        context.expectEqual(firstError as? AppServerError, .notRunning)
+        let result = try await client.readRateLimits()
+        context.expectEqual(result.rateLimits?.limitId, "codex")
+        context.expectEqual(fake.requests.filter { $0.method == "initialize" }.count, 2)
+    }
+
+    test("AppServerProcessTransport completes a request") { context in
+        let script = try makeAppServerScript(
+            "#!/bin/sh\nread line\nprintf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\\n'\n"
+        )
+        defer { try? FileManager.default.removeItem(at: script.deletingLastPathComponent()) }
+        let transport = try ProcessAppServerTransport(binaryURL: script, timeout: 5)
+        defer { transport.close() }
+
+        let result = try await transport.request(method: "initialize", params: [:])
+        context.expectEqual(result["ok"] as? Bool, true)
+    }
+
+    test("AppServerProcessTransport times out a non-responsive child") { context in
+        let script = try makeAppServerScript("#!/bin/sh\nexec sleep 30\n")
+        defer { try? FileManager.default.removeItem(at: script.deletingLastPathComponent()) }
+        let transport = try ProcessAppServerTransport(binaryURL: script, timeout: 0.3)
+        defer { transport.close() }
+
+        let start = Date()
+        var caught: Error?
+        do {
+            _ = try await transport.request(method: "initialize", params: [:])
+        } catch {
+            caught = error
+        }
+        let elapsed = Date().timeIntervalSince(start)
+        context.expectEqual(caught as? AppServerError, .timeout)
+        context.expectTrue(elapsed < 5, "timeout took \(elapsed)s")
+
+        // The blocked serial read must have been released by terminating the
+        // child: the next queued request fails fast instead of hanging again.
+        let retryStart = Date()
+        var retryError: Error?
+        do {
+            _ = try await transport.request(method: "account/rateLimits/read", params: [:])
+        } catch {
+            retryError = error
+        }
+        let retryElapsed = Date().timeIntervalSince(retryStart)
+        context.expectEqual(retryError as? AppServerError, .notRunning)
+        context.expectTrue(retryElapsed < 2, "second request waited \(retryElapsed)s")
+    }
+
+    test("AppServerProcessTransport reports an early exit") { context in
+        let transport = try ProcessAppServerTransport(
+            binaryURL: URL(fileURLWithPath: "/usr/bin/true"),
+            timeout: 5
+        )
+        defer { transport.close() }
+
+        let start = Date()
+        var caught: Error?
+        do {
+            _ = try await transport.request(method: "initialize", params: [:])
+        } catch {
+            caught = error
+        }
+        let elapsed = Date().timeIntervalSince(start)
+        context.expectEqual(caught as? AppServerError, .notRunning)
+        context.expectTrue(elapsed < 3, "early exit took \(elapsed)s")
+    }
+
+    test("AppServerProcessTransport drains stderr without blocking") { context in
+        let script = try makeAppServerScript(
+            "#!/bin/sh\nyes x | head -c 262144 >&2\nread line\nprintf '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\\n'\n"
+        )
+        defer { try? FileManager.default.removeItem(at: script.deletingLastPathComponent()) }
+        let transport = try ProcessAppServerTransport(binaryURL: script, timeout: 5)
+        defer { transport.close() }
+
+        let result = try await transport.request(method: "initialize", params: [:])
+        context.expectEqual(result["ok"] as? Bool, true)
+    }
 }
 
 final class MockHTTPClient: HTTPClient, @unchecked Sendable {
@@ -408,17 +543,54 @@ struct StubResetCreditFallback: ResetCreditFallbackProviding {
 
 final class FakeAppServerTransport: AppServerTransport, @unchecked Sendable {
     struct Request { let method: String; let params: [String: Any] }
-    let result: [String: Any]
-    private(set) var requests: [Request] = []
 
-    init(result: [String: Any]) { self.result = result }
+    private let lock = NSLock()
+    private var recorded: [Request] = []
+    private let result: [String: Any]
+    private let initializeDelay: TimeInterval
+    private var remainingInitializeFailures: Int
+
+    init(result: [String: Any], initializeDelay: TimeInterval = 0, initializeFailures: Int = 0) {
+        self.result = result
+        self.initializeDelay = initializeDelay
+        self.remainingInitializeFailures = initializeFailures
+    }
+
+    var requests: [Request] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
 
     func request(method: String, params: [String: Any]) async throws -> [String: Any] {
-        requests.append(Request(method: method, params: params))
-        if method == "initialize" { return [:] }
+        let request = Request(method: method, params: params)
+        let failsInitialize = lock.withLock {
+            recorded.append(request)
+            let fails = method == "initialize" && remainingInitializeFailures > 0
+            if fails { remainingInitializeFailures -= 1 }
+            return fails
+        }
+
+        if method == "initialize" {
+            if initializeDelay > 0 {
+                try await Task.sleep(nanoseconds: UInt64(initializeDelay * 1_000_000_000))
+            }
+            if failsInitialize { throw AppServerError.notRunning }
+            return [:]
+        }
         return result
     }
 
     func notify(method: String, params: [String: Any]) async throws {}
     func close() {}
+}
+
+func makeAppServerScript(_ contents: String) throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("codexinfo-appserver-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let url = directory.appendingPathComponent("fake-app-server.sh")
+    try contents.write(to: url, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    return url
 }

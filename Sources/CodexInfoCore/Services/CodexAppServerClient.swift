@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public protocol AppServerTransport: Sendable {
@@ -22,6 +23,7 @@ public struct AppServerRateLimits: Equatable, Sendable {
 public actor CodexAppServerClient {
     private let transport: AppServerTransport
     private var initialized = false
+    private var initialization: Task<Void, Error>?
 
     public init(transport: AppServerTransport) {
         self.transport = transport
@@ -35,18 +37,45 @@ public actor CodexAppServerClient {
         return AppServerRateLimits(rateLimits: snapshot, rateLimitsByLimitID: byID)
     }
 
+    /// Caches the handshake as a task so concurrent callers await the same
+    /// `initialize` exchange despite actor reentrancy. A failed handshake is
+    /// cleared before the task throws, so a later call can retry it.
     private func ensureInitialized() async throws {
-        guard !initialized else { return }
-        _ = try await transport.request(method: "initialize", params: [
-            "clientInfo": ["name": "CodexInfo", "title": "CodexInfo", "version": AppConstants.version],
-            "capabilities": [
-                "experimentalApi": false,
-                "requestAttestation": false,
-                "optOutNotificationMethods": [],
-            ],
-        ])
-        try? await transport.notify(method: "initialized", params: [:])
+        if initialized { return }
+        if let initialization {
+            try await initialization.value
+            return
+        }
+
+        let transport = self.transport
+        let task = Task { [weak self] in
+            do {
+                _ = try await transport.request(method: "initialize", params: [
+                    "clientInfo": ["name": "CodexInfo", "title": "CodexInfo", "version": AppConstants.version],
+                    "capabilities": [
+                        "experimentalApi": false,
+                        "requestAttestation": false,
+                        "optOutNotificationMethods": [],
+                    ],
+                ])
+                try? await transport.notify(method: "initialized", params: [:])
+                await self?.finishInitialization()
+            } catch {
+                await self?.resetInitialization()
+                throw error
+            }
+        }
+        initialization = task
+        try await task.value
+    }
+
+    private func finishInitialization() {
         initialized = true
+        initialization = nil
+    }
+
+    private func resetInitialization() {
+        initialization = nil
     }
 }
 
@@ -105,74 +134,171 @@ public enum CodexBinaryLocator {
 }
 
 public final class ProcessAppServerTransport: AppServerTransport, @unchecked Sendable {
+    /// Guards the continuation so the response and timeout paths can race
+    /// without resuming it twice.
+    private final class RequestCompletion: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<[String: Any], Error>?
+
+        init(_ continuation: CheckedContinuation<[String: Any], Error>) {
+            self.continuation = continuation
+        }
+
+        func resume(returning result: [String: Any]) {
+            finish { $0.resume(returning: result) }
+        }
+
+        func resume(throwing error: Error) {
+            finish { $0.resume(throwing: error) }
+        }
+
+        /// Resumes with `error` only if no other path delivered a result.
+        @discardableResult
+        func failIfPending(with error: Error) -> Bool {
+            var delivered = false
+            finish { continuation in
+                delivered = true
+                continuation.resume(throwing: error)
+            }
+            return delivered
+        }
+
+        private func finish(_ body: (CheckedContinuation<[String: Any], Error>) -> Void) {
+            lock.lock()
+            guard let continuation else {
+                lock.unlock()
+                return
+            }
+            self.continuation = nil
+            lock.unlock()
+            body(continuation)
+        }
+    }
+
     private let process: Process
     private let input: FileHandle
     private let output: FileHandle
+    private let timeout: TimeInterval
     private let queue = DispatchQueue(label: "com.laoer.codexinfo.appserver")
+    private let timeoutQueue = DispatchQueue(label: "com.laoer.codexinfo.appserver.timeout")
+    private let writeLock = NSLock()
     private var buffer = Data()
     private var nextID = 1
     private var closed = false
 
-    public init(binaryURL: URL) throws {
+    public init(binaryURL: URL, timeout: TimeInterval = 10) throws {
         let process = Process()
         let stdin = Pipe()
         let stdout = Pipe()
-        let stderr = Pipe()
         process.executableURL = binaryURL
         process.arguments = ["app-server", "--listen", "stdio://"]
         process.standardInput = stdin
         process.standardOutput = stdout
-        process.standardError = stderr
+        // Discard stderr asynchronously: an undrained pipe eventually wedges
+        // the child, and its content may contain token-bearing output.
+        process.standardError = FileHandle.nullDevice
+        // A dead child must surface as a throwing write, not a SIGPIPE crash.
+        _ = fcntl(stdin.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
         try process.run()
         self.process = process
         self.input = stdin.fileHandleForWriting
         self.output = stdout.fileHandleForReading
+        self.timeout = timeout
     }
 
     public func request(method: String, params: [String: Any]) async throws -> [String: Any] {
         try await withCheckedThrowingContinuation { continuation in
+            let completion = RequestCompletion(continuation)
             queue.async {
-                do {
-                    let id = self.nextID
-                    self.nextID += 1
-                    let message: [String: Any] = [
-                        "jsonrpc": "2.0",
-                        "id": id,
-                        "method": method,
-                        "params": params,
-                    ]
-                    self.input.write(try JSONSerialization.data(withJSONObject: message) + Data("\n".utf8))
-                    while let line = self.readLine() {
-                        guard let object = try JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
-                        guard (object["id"] as? NSNumber)?.intValue == id else { continue }
-                        if let error = object["error"] as? [String: Any] {
-                            let code = (error["code"] as? NSNumber)?.intValue ?? -32603
-                            let text = error["message"] as? String ?? "app-server error"
-                            throw AppServerError.rpc(code: code, message: text)
-                        }
-                        guard let result = object["result"] as? [String: Any] else { throw AppServerError.invalidResponse }
-                        continuation.resume(returning: result)
-                        return
-                    }
-                    throw AppServerError.notRunning
-                } catch {
-                    continuation.resume(throwing: error)
-                }
+                self.performRequest(method: method, params: params, completion: completion)
             }
         }
     }
 
     public func notify(method: String, params: [String: Any]) async throws {
-        let message: [String: Any] = ["jsonrpc": "2.0", "method": method, "params": params]
-        input.write(try JSONSerialization.data(withJSONObject: message) + Data("\n".utf8))
+        try send(["jsonrpc": "2.0", "method": method, "params": params])
     }
 
     public func close() {
-        guard !closed else { return }
+        terminateProcess()
+    }
+
+    private func performRequest(method: String, params: [String: Any], completion: RequestCompletion) {
+        let id = nextID
+        nextID += 1
+        let message: [String: Any] = [
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        ]
+        do {
+            try send(message)
+        } catch {
+            completion.resume(throwing: AppServerError.notRunning)
+            return
+        }
+
+        // The deadline fires on its own queue: the serial queue is blocked in
+        // `readLine`, so a timer scheduled there could never run. On expiry the
+        // child is terminated so the blocked read observes EOF and the queue
+        // drains instead of leaking a thread and a wedged process.
+        let timeoutItem = DispatchWorkItem { [weak self] in
+            guard let self, completion.failIfPending(with: AppServerError.timeout) else { return }
+            self.terminateProcess()
+        }
+        timeoutQueue.asyncAfter(deadline: .now() + timeout, execute: timeoutItem)
+
+        while let line = readLine() {
+            guard let data = try? JSONSerialization.jsonObject(with: line),
+                  let object = data as? [String: Any] else { continue }
+            guard (object["id"] as? NSNumber)?.intValue == id else { continue }
+            timeoutItem.cancel()
+            if let error = object["error"] as? [String: Any] {
+                let code = (error["code"] as? NSNumber)?.intValue ?? -32603
+                let text = error["message"] as? String ?? "app-server error"
+                completion.resume(throwing: AppServerError.rpc(code: code, message: text))
+                return
+            }
+            guard let result = object["result"] as? [String: Any] else {
+                completion.resume(throwing: AppServerError.invalidResponse)
+                return
+            }
+            completion.resume(returning: result)
+            return
+        }
+        timeoutItem.cancel()
+        completion.resume(throwing: AppServerError.notRunning)
+    }
+
+    private func send(_ message: [String: Any]) throws {
+        let data = try JSONSerialization.data(withJSONObject: message) + Data("\n".utf8)
+        writeLock.lock()
+        defer { writeLock.unlock() }
+        guard !closed else { throw AppServerError.notRunning }
+        try input.write(contentsOf: data)
+    }
+
+    private func terminateProcess() {
+        writeLock.lock()
+        guard !closed else {
+            writeLock.unlock()
+            return
+        }
         closed = true
-        input.closeFile()
-        output.closeFile()
-        if process.isRunning { process.terminate() }
+        try? input.close()
+        writeLock.unlock()
+
+        guard process.isRunning else { return }
+        process.terminate()
+        let process = self.process
+        // Escalate if the child ignores SIGTERM so the blocked stdout read
+        // still observes EOF.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
+        }
     }
 
     private func readLine() -> Data? {
