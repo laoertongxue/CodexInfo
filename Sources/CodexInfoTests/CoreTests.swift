@@ -1099,6 +1099,28 @@ func registerCoreTests() {
             context.expectTrue(snapshot.disclaimer.contains("不代表官方结论"))
         }
     }
+
+    test("CodexRadarCurrentSource normalizes a confirmed reset") { context in
+        let json = #"{"monitored_at":"2026-10-24T12:00:00+08:00","window":{"scope":"Codex 用户","source_url":"https://x.com/example"},"completion_observation":{"status":"completed","confirmation_level":"stationmaster_confirmed","occurred_on":"2026-10-24","title_zh":"Day 18 重置完成","evidence_zh":"站长已确认","announcement_url":"https://x.com/example"}}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200))
+        let source = CodexRadarCurrentSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(signals.count, 1)
+        context.expectEqual(signals.first?.kind, .reset)
+        context.expectEqual(signals.first?.verified, true)
+        context.expectEqual(signals.first?.scope, "Codex 用户")
+        context.expectEqual(signals.first?.url?.absoluteString, "https://x.com/example")
+    }
+
+    test("OpenAIStatusSource reports service status without claiming a reset") { context in
+        let json = #"{"status":{"indicator":"none","description":"All Systems Operational"}}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200))
+        let source = OpenAIStatusSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(signals.count, 1)
+        context.expectEqual(signals.first?.kind, .status)
+        context.expectEqual(signals.first?.verified, false)
+    }
 }
 
 /// Builds synthetic completed turns whose degradation severity grows with `severity`.
