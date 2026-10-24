@@ -139,6 +139,53 @@ func registerCoreTests() {
         context.expectEqual(snapshot?.availableCount, 1)
         context.expectEqual(snapshot?.items.first?.title, "fallback")
     }
+
+    test("SessionLogParser reads token usage and task completion") { context in
+        let usageLine = #"{"timestamp":"2026-10-24T02:48:22.880Z","type":"token_usage_record","payload":{"turn_id":"turn-1","response_id":"resp-1","usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":150},"turn_token_usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":150},"thread_token_usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":150}}}"#
+        guard case .tokenUsageRecord(let record)? = SessionLogParser.parse(line: Data(usageLine.utf8)) else {
+            context.fail("expected tokenUsageRecord")
+            return
+        }
+        context.expectEqual(record.turnId, "turn-1")
+        context.expectEqual(record.responseId, "resp-1")
+        context.expectEqual(record.usage.outputTokens, 50)
+        context.expectEqual(record.usage.cachedInputTokens, 80)
+
+        let completeLine = #"{"timestamp":"2026-10-24T02:51:08.576Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1","duration_ms":171807,"time_to_first_token_ms":3991}}"#
+        guard case .taskComplete(let complete)? = SessionLogParser.parse(line: Data(completeLine.utf8)) else {
+            context.fail("expected taskComplete")
+            return
+        }
+        context.expectEqual(complete.turnId, "turn-1")
+        context.expectEqual(complete.durationMs, 171807)
+        context.expectEqual(complete.ttftMs, 3991)
+    }
+
+    test("SessionLogParser reads item durations and thread settings") { context in
+        let itemLine = #"{"timestamp":"2026-10-24T02:48:23.000Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"turn-1","item":{"type":"Reasoning"},"started_at_ms":1000,"completed_at_ms":3000}}"#
+        guard case .itemCompleted(let item)? = SessionLogParser.parse(line: Data(itemLine.utf8)) else {
+            context.fail("expected itemCompleted")
+            return
+        }
+        context.expectEqual(item.itemType, "Reasoning")
+        context.expectEqual(item.startedAtMs, 1000)
+        context.expectEqual(item.completedAtMs, 3000)
+
+        let settingsLine = #"{"timestamp":"2026-10-24T02:48:18.321Z","type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model":"gpt-6.1-sol","model_provider_id":"openai","service_tier":"default","reasoning_effort":"xhigh"}}}"#
+        guard case .threadSettings(let settings)? = SessionLogParser.parse(line: Data(settingsLine.utf8)) else {
+            context.fail("expected threadSettings")
+            return
+        }
+        context.expectEqual(settings.model, "gpt-6.1-sol")
+        context.expectEqual(settings.reasoningEffort, "xhigh")
+        context.expectEqual(settings.serviceTier, "default")
+        context.expectEqual(settings.provider, "openai")
+    }
+
+    test("SessionLogParser ignores response content events") { context in
+        let line = #"{"timestamp":"2026-10-24T02:48:22.880Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"Text","text":"secret"}]}}"#
+        context.expectEqual(SessionLogParser.parse(line: Data(line.utf8)), nil)
+    }
 }
 
 final class MockHTTPClient: HTTPClient, @unchecked Sendable {
