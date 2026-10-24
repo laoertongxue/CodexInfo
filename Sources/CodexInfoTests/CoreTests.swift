@@ -58,6 +58,19 @@ func registerCoreTests() {
         context.expectEqual(low.remainingPercent, 100)
     }
 
+    test("RateLimitWindow survives a malformed used percent") { context in
+        // A malformed payload can carry a percentage outside the range of an
+        // `Int` or a non-finite number. The conversion may not trap.
+        let huge = RateLimitWindow(usedPercent: 1e30, windowDurationMins: 10_080, resetsAt: nil)
+        let negative = RateLimitWindow(usedPercent: -1e30, windowDurationMins: 10_080, resetsAt: nil)
+        let notANumber = RateLimitWindow(usedPercent: .nan, windowDurationMins: 10_080, resetsAt: nil)
+        let infinite = RateLimitWindow(usedPercent: .infinity, windowDurationMins: 10_080, resetsAt: nil)
+        context.expectEqual(huge.remainingPercent, 0)
+        context.expectEqual(negative.remainingPercent, 100)
+        context.expectEqual(notANumber.remainingPercent, 0)
+        context.expectEqual(infinite.remainingPercent, 0)
+    }
+
     test("RateLimitBucketSelector filters limit id codex") { context in
         let codex = RateLimitSnapshot(limitId: "codex", primary: nil, secondary: nil, planType: "pro")
         let decoy = RateLimitSnapshot(limitId: "codex_bengalfox", primary: nil, secondary: nil, planType: "pro")

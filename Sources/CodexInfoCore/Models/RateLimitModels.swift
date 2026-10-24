@@ -11,8 +11,17 @@ public struct RateLimitWindow: Codable, Equatable, Sendable {
         self.resetsAt = resetsAt
     }
 
+    /// The share of the window that is left.
+    ///
+    /// The value is clamped in `Double` space and converted afterwards: a
+    /// malformed payload can carry a percentage far outside the range of an
+    /// `Int` (`1e30`) or a non-finite number, and the conversion to `Int`
+    /// traps on both. A non-finite percentage carries no usable value, so the
+    /// window counts as fully used.
     public var remainingPercent: Int {
-        Int((100 - usedPercent).rounded()).clamped(to: 0...100)
+        guard usedPercent.isFinite else { return 0 }
+        let remaining = (100 - usedPercent).clamped(to: 0...100)
+        return Int(remaining.rounded())
     }
 }
 
