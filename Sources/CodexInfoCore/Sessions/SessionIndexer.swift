@@ -12,7 +12,7 @@ public actor SessionIndexer {
         var size: UInt64
     }
 
-    private struct CachedIndex: Codable {
+    private struct CachedIndex: Codable, Equatable {
         let size: UInt64
         let modifiedAt: Date
         let index: SessionIndex
@@ -20,18 +20,42 @@ public actor SessionIndexer {
         let threadTotalTokens: Int?
     }
 
+    /// The shortest time between two writes of the cache file.
+    ///
+    /// The app scans the log every few seconds, and the cache holds the
+    /// metrics of every session. Writing it on every scan would rewrite
+    /// hundreds of kilobytes over and over, so the cache is written when it
+    /// changed and at most once per interval.
+    public static let cacheWriteInterval: TimeInterval = 30
+
     private let rootURL: URL
     private let cacheURL: URL?
+    private let cacheWriteInterval: TimeInterval
     private var states: [String: FileState] = [:]
     private var cachedIndexes: [String: CachedIndex] = [:]
     private var scanCount = 0
+    /// Whether the cache holds a change that was not written yet.
+    private var cacheDirty = false
+    /// The moment the cache file was written the last time.
+    private var lastCacheWrite: Date?
+    /// The number of times the cache file was written.
+    private var cacheWriteCount = 0
 
-    public init(rootURL: URL, cacheURL: URL? = nil) {
+    public init(
+        rootURL: URL,
+        cacheURL: URL? = nil,
+        cacheWriteInterval: TimeInterval = SessionIndexer.cacheWriteInterval
+    ) {
         self.rootURL = rootURL
         self.cacheURL = cacheURL
+        self.cacheWriteInterval = cacheWriteInterval
         if let cacheURL, let data = try? Data(contentsOf: cacheURL),
            let decoded = try? JSONDecoder().decode([String: CachedIndex].self, from: data) {
             self.cachedIndexes = decoded
+            // The file on disk is as fresh as its moment, so a scan that does
+            // not change anything does not write it again.
+            let values = try? cacheURL.resourceValues(forKeys: [.contentModificationDateKey])
+            self.lastCacheWrite = values?.contentModificationDate
         }
     }
 
@@ -40,6 +64,11 @@ public actor SessionIndexer {
     /// The counter shows whether the areas of a build shared one scan of the
     /// session log.
     public var scans: Int { scanCount }
+
+    /// The number of times the cache file was written.
+    ///
+    /// The counter shows that the cache is not rewritten on every scan.
+    public var cacheWrites: Int { cacheWriteCount }
 
     public func scan() async -> [SessionIndex] {
         performScan().indexes
@@ -168,23 +197,42 @@ public actor SessionIndexer {
             )
             results.append(index)
             if let threadTotal { threadTotals[path] = threadTotal }
-            cachedIndexes[path] = CachedIndex(
+            let cached = CachedIndex(
                 size: currentSize,
                 modifiedAt: modifiedAt,
                 index: index,
                 threadTotalTokens: threadTotal
             )
+            if cachedIndexes[path] != cached { cacheDirty = true }
+            cachedIndexes[path] = cached
         }
 
         // Sessions that disappeared must not keep occupying the cache or the memory.
-        cachedIndexes = cachedIndexes.filter { seenPaths.contains($0.key) }
+        let pruned = cachedIndexes.filter { seenPaths.contains($0.key) }
+        if pruned.count != cachedIndexes.count { cacheDirty = true }
+        cachedIndexes = pruned
         states = states.filter { seenPaths.contains($0.key) }
 
-        if let cacheURL, let data = try? JSONEncoder().encode(cachedIndexes) {
-            try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: cacheURL, options: .atomic)
-        }
+        writeCacheIfNeeded()
         return (indexes: results.sorted { $0.modifiedAt < $1.modifiedAt }, threadTotals: threadTotals)
+    }
+
+    /// Writes the cache file when it changed and the interval is over.
+    ///
+    /// The cache is an optimization, so a scan that found nothing new leaves
+    /// the file alone. The first scan writes it, so the file exists even when
+    /// the log never changes.
+    private func writeCacheIfNeeded() {
+        guard let cacheURL else { return }
+        guard cacheDirty || lastCacheWrite == nil else { return }
+        let now = Date()
+        if let lastCacheWrite, now.timeIntervalSince(lastCacheWrite) < cacheWriteInterval { return }
+        guard let data = try? JSONEncoder().encode(cachedIndexes) else { return }
+        try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: cacheURL, options: .atomic)
+        cacheDirty = false
+        lastCacheWrite = now
+        cacheWriteCount += 1
     }
 
     /// Cumulative thread token total of the newest token usage record. A zero total means the

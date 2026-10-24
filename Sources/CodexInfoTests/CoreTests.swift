@@ -763,7 +763,7 @@ func registerCoreTests() {
         let content = "{\"timestamp\":\"2026-10-24T02:48:19.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-1\",\"started_at\":1792810096}}\n"
         try content.write(to: file, atomically: true, encoding: .utf8)
 
-        let indexer = SessionIndexer(rootURL: directory, cacheURL: cacheURL)
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: cacheURL, cacheWriteInterval: 0)
         let first = await indexer.scan()
         context.expectEqual(first.count, 1)
         let cachedEntries = try JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? [String: Any]
@@ -772,6 +772,8 @@ func registerCoreTests() {
         try FileManager.default.removeItem(at: file)
         let second = await indexer.scan()
         context.expectEqual(second.count, 0)
+        // The write interval is zero here, so the pruned entry leaves the file
+        // right away. The indexer writes the file at most once per interval.
         let prunedEntries = try JSONSerialization.jsonObject(with: Data(contentsOf: cacheURL)) as? [String: Any]
         context.expectEqual(prunedEntries?.count, 0)
     }
@@ -975,6 +977,46 @@ func registerCoreTests() {
             let scanned = await indexer.scan()
             context.expectEqual(scanned.first?.turns.first?.toolCallCount, expectedToolCalls)
         }
+    }
+
+    test("SessionIndexer writes the cache only when it changed") { context in
+        // The app scans the log every few seconds, so the cache must not be
+        // rewritten every time.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let session = directory.appendingPathComponent("session.jsonl")
+        let line = #"{"timestamp":"2026-10-24T02:48:19.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","started_at":1792810096}}"# + "\n"
+        try line.write(to: session, atomically: true, encoding: .utf8)
+        let cacheURL = directory.appendingPathComponent("session-index.json")
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: cacheURL, cacheWriteInterval: 0)
+        _ = await indexer.scan()
+        context.expectEqual(await indexer.cacheWrites, 1, "the first scan writes the cache")
+        _ = await indexer.scan()
+        context.expectEqual(await indexer.cacheWrites, 1, "an unchanged scan leaves the cache alone")
+        try line.write(to: session, atomically: true, encoding: .utf8)
+        _ = await indexer.scan()
+        context.expectEqual(await indexer.cacheWrites, 2, "a changed scan writes the cache")
+    }
+
+    test("SessionIndexer throttles the cache writes") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let session = directory.appendingPathComponent("session.jsonl")
+        let line = #"{"timestamp":"2026-10-24T02:48:19.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","started_at":1792810096}}"# + "\n"
+        try line.write(to: session, atomically: true, encoding: .utf8)
+        let cacheURL = directory.appendingPathComponent("session-index.json")
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: cacheURL, cacheWriteInterval: 3_600)
+        _ = await indexer.scan()
+        context.expectEqual(await indexer.cacheWrites, 1, "the first scan writes the cache")
+        try line.write(to: session, atomically: true, encoding: .utf8)
+        _ = await indexer.scan()
+        context.expectEqual(await indexer.cacheWrites, 1, "the change waits for the interval")
     }
 
     test("DegradationAnalyzer returns normal for a single weak signal") { context in
