@@ -714,7 +714,7 @@ func registerCoreTests() {
         ))
         let official = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
         let local = StubLocalAccount(today: 100, total: 999)
-        let service = AccountUsageService(official: official, sessions: local)
+        let service = AccountUsageService(official: official, sessions: local, calendar: accountTestCalendar(timeZone: "UTC"))
         let snapshot = await service.accountSnapshot(now: today)
         context.expectEqual(snapshot?.todayTokens, 1234)
         context.expectEqual(snapshot?.totalTokens, 999)
@@ -725,11 +725,159 @@ func registerCoreTests() {
         let http = MockHTTPClient(error: HTTPError.status(500))
         let official = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
         let local = StubLocalAccount(today: 100, total: 999)
-        let service = AccountUsageService(official: official, sessions: local)
+        let service = AccountUsageService(official: official, sessions: local, calendar: accountTestCalendar(timeZone: "UTC"))
         let snapshot = await service.accountSnapshot(now: today)
         context.expectEqual(snapshot?.todayTokens, 100)
         context.expectEqual(snapshot?.totalTokens, 999)
         context.expectEqual(snapshot?.source, "local")
+    }
+
+    test("Official daily usage request keeps the documented shape") { context in
+        let http = MockHTTPClient(response: HTTPResponse(data: #"{"days":[]}"#.data(using: .utf8)!, statusCode: 200))
+        let client = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let start = DateParsing.iso8601("2026-10-24T00:00:00Z")!
+        let end = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let total = try await client.fetchDailyTokenUsage(start: start, end: end, calendar: accountTestCalendar(timeZone: "UTC"))
+        context.expectEqual(total, 0)
+
+        let request = http.lastRequest
+        context.expectEqual(request?.httpMethod, "GET")
+        context.expectEqual(request?.url?.path, "/backend-api/wham/usage/daily-token-usage-breakdown")
+        context.expectEqual(requestQueryValue(request, name: "start_date"), "2026-10-24")
+        context.expectEqual(requestQueryValue(request, name: "end_date"), "2026-10-24")
+        context.expectEqual(requestQueryValue(request, name: "group_by"), "day")
+        context.expectEqual(request?.value(forHTTPHeaderField: "Authorization"), "Bearer tok_test")
+        context.expectEqual(request?.value(forHTTPHeaderField: "Accept"), "application/json")
+        context.expectEqual(request?.value(forHTTPHeaderField: "User-Agent"), AppConstants.userAgent)
+        context.expectEqual(request?.value(forHTTPHeaderField: "x-openai-codex-usage-categories"), "1")
+        context.expectEqual(request?.timeoutInterval, 10)
+    }
+
+    test("Official daily usage reads the recognized breakdown shapes") { context in
+        let calendar = accountTestCalendar(timeZone: "UTC")
+        let start = DateParsing.iso8601("2026-10-24T00:00:00Z")!
+        let end = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        // Rows under "days" with the "total_tokens" spelling.
+        context.expectEqual(try await officialDailyTotal(#"{"days":[{"date":"2026-10-24","total_tokens":1234}]}"#, calendar: calendar, start: start, end: end), 1234)
+        // Rows under "data" with the "tokens" and "total" spellings.
+        context.expectEqual(try await officialDailyTotal(#"{"data":[{"tokens":10},{"total":5}]}"#, calendar: calendar, start: start, end: end), 15)
+        // Rows under "breakdown" with the "total" spelling.
+        context.expectEqual(try await officialDailyTotal(#"{"breakdown":[{"total_tokens":7}]}"#, calendar: calendar, start: start, end: end), 7)
+        // A summary payload without rows.
+        context.expectEqual(try await officialDailyTotal(#"{"total_tokens":42}"#, calendar: calendar, start: start, end: end), 42)
+        // A recognized breakdown without rows is a genuine zero.
+        context.expectEqual(try await officialDailyTotal(#"{"days":[]}"#, calendar: calendar, start: start, end: end), 0)
+        // A known container without rows is a recognized breakdown without usage.
+        context.expectEqual(try await officialDailyTotal(#"{"days":null}"#, calendar: calendar, start: start, end: end), 0)
+    }
+
+    test("Official daily usage rejects an unknown payload shape") { context in
+        let calendar = accountTestCalendar(timeZone: "UTC")
+        let start = DateParsing.iso8601("2026-10-24T00:00:00Z")!
+        let end = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let unknown = [
+            #"{"unknown":1}"#,
+            #"{"days":{"2026-10-24":1234}}"#,
+            #"{"days":[{"date":"2026-10-24"}]}"#,
+            #"{"days":[{"date":"2026-10-24","total_tokens":"1234"}]}"#,
+            #"{"days":[{"date":"2026-10-24","total_tokens":true}]}"#,
+            #"{"total_tokens":"1234"}"#,
+        ]
+        for payload in unknown {
+            do {
+                _ = try await officialDailyTotal(payload, calendar: calendar, start: start, end: end)
+                context.fail("expected invalidPayload for \(payload)")
+            } catch let error as OfficialUsageError {
+                context.expectEqual(error, .invalidPayload)
+            } catch {
+                context.fail("expected invalidPayload for \(payload), got \(error)")
+            }
+        }
+
+        // An unreadable official payload degrades to the local numbers instead of
+        // publishing a false zero.
+        let http = MockHTTPClient(response: HTTPResponse(data: #"{"unknown":1}"#.data(using: .utf8)!, statusCode: 200))
+        let official = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let service = AccountUsageService(official: official, sessions: StubLocalAccount(today: 100, total: 999), calendar: calendar)
+        let snapshot = await service.accountSnapshot(now: end)
+        context.expectEqual(snapshot?.todayTokens, 100)
+        context.expectEqual(snapshot?.totalTokens, 999)
+        context.expectEqual(snapshot?.source, "local")
+    }
+
+    test("Official daily usage renders the start date in the injected time zone") { context in
+        let instant = DateParsing.iso8601("2026-10-23T20:00:00Z")!
+        let utc = MockHTTPClient(response: HTTPResponse(data: #"{"days":[]}"#.data(using: .utf8)!, statusCode: 200))
+        let utcClient = OfficialUsageClient(http: utc, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        _ = try await utcClient.fetchDailyTokenUsage(start: instant, end: instant, calendar: accountTestCalendar(timeZone: "UTC"))
+        let shanghai = MockHTTPClient(response: HTTPResponse(data: #"{"days":[]}"#.data(using: .utf8)!, statusCode: 200))
+        let shanghaiClient = OfficialUsageClient(http: shanghai, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        _ = try await shanghaiClient.fetchDailyTokenUsage(start: instant, end: instant, calendar: accountTestCalendar(timeZone: "Asia/Shanghai"))
+
+        context.expectEqual(requestQueryValue(utc.lastRequest, name: "start_date"), "2026-10-23")
+        context.expectEqual(requestQueryValue(shanghai.lastRequest, name: "start_date"), "2026-10-24")
+    }
+
+    test("Official daily usage excludes rows of another date") { context in
+        let calendar = accountTestCalendar(timeZone: "UTC")
+        let start = DateParsing.iso8601("2026-10-24T00:00:00Z")!
+        let end = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        // Only the rows of the requested day count.
+        let mixed = try await officialDailyTotal(
+            #"{"days":[{"date":"2026-10-23","total_tokens":500},{"date":"2026-10-24","total_tokens":1234}]}"#,
+            calendar: calendar, start: start, end: end
+        )
+        context.expectEqual(mixed, 1234)
+        // A breakdown whose rows all belong to another day has no usage today.
+        let other = try await officialDailyTotal(#"{"days":[{"date":"2026-10-23","total_tokens":500}]}"#, calendar: calendar, start: start, end: end)
+        context.expectEqual(other, 0)
+        // Without a date on the rows every row is summed.
+        let undated = try await officialDailyTotal(#"{"days":[{"total_tokens":10},{"total_tokens":5}]}"#, calendar: calendar, start: start, end: end)
+        context.expectEqual(undated, 15)
+    }
+
+    test("Account service drops the cached snapshot when the local day changes") { context in
+        let calendar = accountTestCalendar(timeZone: "UTC")
+        let http = MockHTTPClient(response: HTTPResponse(
+            data: #"{"days":[{"date":"2026-10-24","total_tokens":1234}]}"#.data(using: .utf8)!,
+            statusCode: 200
+        ))
+        let official = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let service = AccountUsageService(official: official, sessions: StubLocalAccount(today: 100, total: 999), calendar: calendar)
+        // Two minutes apart, but the local day rolled over in between.
+        _ = await service.accountSnapshot(now: DateParsing.iso8601("2026-10-24T23:59:00Z")!)
+        _ = await service.accountSnapshot(now: DateParsing.iso8601("2026-10-25T00:01:00Z")!)
+        context.expectEqual(http.requestCount, 2)
+    }
+
+    test("Account service bypasses the cache on a forced refresh") { context in
+        let calendar = accountTestCalendar(timeZone: "UTC")
+        let http = MockHTTPClient(response: HTTPResponse(
+            data: #"{"days":[{"date":"2026-10-24","total_tokens":1234}]}"#.data(using: .utf8)!,
+            statusCode: 200
+        ))
+        let official = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let service = AccountUsageService(official: official, sessions: StubLocalAccount(today: 100, total: 999), calendar: calendar)
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        _ = await service.accountSnapshot(now: now)
+        _ = await service.accountSnapshot(now: now)
+        context.expectEqual(http.requestCount, 1)
+        _ = await service.accountSnapshot(now: now, force: true)
+        context.expectEqual(http.requestCount, 2)
+    }
+
+    test("Account service still answers the snapshot provider call") { context in
+        let calendar = accountTestCalendar(timeZone: "UTC")
+        let http = MockHTTPClient(response: HTTPResponse(
+            data: #"{"days":[{"date":"2026-10-24","total_tokens":1234}]}"#.data(using: .utf8)!,
+            statusCode: 200
+        ))
+        let official = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let service = AccountUsageService(official: official, sessions: StubLocalAccount(today: 100, total: 999), calendar: calendar)
+        let provider: FutureAccountSnapshotProviding = service
+        let snapshot = await provider.accountSnapshot(now: DateParsing.iso8601("2026-10-24T12:00:00Z")!)
+        context.expectEqual(snapshot?.todayTokens, 1234)
+        context.expectEqual(snapshot?.totalTokens, 999)
     }
 
     test("SessionIndexer does not duplicate events of a session that grows while it is read") { context in
@@ -855,6 +1003,37 @@ struct StubLocalAccount: AccountTotalsProviding {
     func accountTotals(now: Date, calendar: Calendar) async -> (today: Int, total: Int) {
         (today, total)
     }
+}
+
+/// A Gregorian calendar pinned to the given time zone.
+func accountTestCalendar(timeZone identifier: String) -> Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: identifier)!
+    return calendar
+}
+
+/// Mirrors the snapshot provider protocol that a later task consumes.
+///
+/// The cache bypassing overload of `accountSnapshot` must not take the
+/// `accountSnapshot(now:)` call of that protocol away.
+protocol FutureAccountSnapshotProviding: Sendable {
+    func accountSnapshot(now: Date) async -> AccountSnapshot?
+}
+
+extension AccountUsageService: FutureAccountSnapshotProviding {}
+
+/// Asks the official client for the daily total of the given payload.
+func officialDailyTotal(_ payload: String, calendar: Calendar, start: Date, end: Date) async throws -> Int {
+    let http = MockHTTPClient(response: HTTPResponse(data: Data(payload.utf8), statusCode: 200))
+    let client = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+    return try await client.fetchDailyTokenUsage(start: start, end: end, calendar: calendar)
+}
+
+/// The value of a query item of the recorded request.
+func requestQueryValue(_ request: URLRequest?, name: String) -> String? {
+    guard let url = request?.url,
+          let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+    return components.queryItems?.first { $0.name == name }?.value
 }
 
 final class FakeAppServerTransport: AppServerTransport, @unchecked Sendable {
