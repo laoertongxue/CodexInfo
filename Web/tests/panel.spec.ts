@@ -1,4 +1,21 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+
+/** The relative luminance of a `rgb()` colour. */
+function luminance(color: string): number {
+  const values = color.match(/\d+(\.\d+)?/g)?.map(Number) ?? [0, 0, 0];
+  const [r, g, b] = values.slice(0, 3).map((value) => {
+    const channel = value / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** The contrast ratio of two `rgb()` colours. */
+function contrast(first: string, second: string): number {
+  const values = [luminance(first), luminance(second)].sort((a, b) => b - a);
+  return (values[0] + 0.05) / (values[1] + 0.05);
+}
 
 test("panel follows the B layout", async ({ page }) => {
   await page.goto("/");
@@ -121,4 +138,43 @@ test("an unreachable source is never shown as a reset confirmation", async ({ pa
   const radar = page.getByTestId("reset-radar");
   await expect(radar).toContainText("源不可用");
   await expect(radar).not.toContainText("来源已确认");
+});
+
+test("a strong severity without a confirmation is not a strong signal", async ({ page }) => {
+  await page.goto("/?fixture=strong-unverified");
+  await expect(page.getByTestId("reset-notice")).toBeVisible();
+  await expect(page.getByText("强信号")).toHaveCount(0);
+});
+
+test("the official status source never confirms a reset", async ({ page }) => {
+  await page.goto("/?fixture=status-confirming");
+  await expect(page.getByTestId("confirmation-state")).toContainText("单一来源");
+  await expect(page.getByTestId("confirmation-state")).not.toContainText("来源已确认");
+});
+
+test("the reset cards show a dash when the area has no data", async ({ page }) => {
+  await page.goto("/?fixture=credits-error");
+  await expect(page.getByTestId("reset-credit-count")).toHaveText("—");
+  await expect(page.getByTestId("reset-credit")).toContainText("重置卡数据不可用");
+});
+
+test("the muted text keeps a readable contrast in both schemes", async ({ page }) => {
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.goto("/");
+    await page.getByTestId("panel").waitFor();
+    const colors = await page.evaluate(() => {
+      const panel = getComputedStyle(document.querySelector("[data-testid='panel']")!);
+      const muted = getComputedStyle(document.querySelector(".muted")!);
+      return { background: panel.backgroundColor, foreground: muted.color };
+    });
+    expect(contrast(colors.foreground, colors.background)).toBeGreaterThanOrEqual(4.5);
+  }
+});
+
+test("the built artifact carries no external reference", () => {
+  const html = readFileSync(new URL("../dist/index.html", import.meta.url), "utf8");
+  expect(html).not.toMatch(/<script[^>]+src=/);
+  expect(html).not.toMatch(/<link[^>]+rel="stylesheet"/);
+  expect(html).toContain("Content-Security-Policy");
 });

@@ -25,12 +25,21 @@ public struct Freshness: Codable, Equatable, Sendable {
     public let account: DataState
     /// The state of the reset sources.
     public let sources: DataState
+    /// The state of the reset cards.
+    public let resetCredits: DataState
 
-    public init(quota: DataState, session: DataState, account: DataState, sources: DataState) {
+    public init(
+        quota: DataState,
+        session: DataState,
+        account: DataState,
+        sources: DataState,
+        resetCredits: DataState = .fresh
+    ) {
         self.quota = quota
         self.session = session
         self.account = account
         self.sources = sources
+        self.resetCredits = resetCredits
     }
 }
 

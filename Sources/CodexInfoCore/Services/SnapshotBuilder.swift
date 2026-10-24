@@ -112,7 +112,11 @@ public actor SnapshotBuilder {
                 // the last scan of the log files.
                 session: sessionProvided == nil ? .error : .fresh,
                 account: accountProvided.map { state($0.updatedAt, now: now) } ?? .error,
-                sources: radarSnapshot.lastScanAt.map { state($0, now: now) } ?? .error
+                sources: radarSnapshot.lastScanAt.map { state($0, now: now) } ?? .error,
+                // The reset cards have their own state, so a failed read shows
+                // "—" in the panel instead of an empty list that looks like
+                // a real zero.
+                resetCredits: creditsProvided.map { state($0.fetchedAt, now: now) } ?? .error
             ),
             quota: quotaSnapshot,
             resetCredits: creditsSnapshot,

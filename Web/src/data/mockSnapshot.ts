@@ -8,7 +8,7 @@ import type { UsageSnapshot } from "./types";
  */
 export const mockSnapshot: UsageSnapshot = {
   "generatedAt": "2026-10-24T14:20:39+08:00",
-  "freshness": { "quota": "fresh", "session": "fresh", "account": "fresh", "sources": "fresh" },
+  "freshness": { "quota": "fresh", "session": "fresh", "account": "fresh", "sources": "fresh", "resetCredits": "fresh" },
   "quota": { "planType": "pro", "weeklyRemainingPercent": 84, "weeklyResetsAt": "2026-10-26T11:03:00+08:00", "source": "official", "fetchedAt": "2026-10-24T14:20:39+08:00" },
   "resetCredits": { "availableCount": 1, "reportedAvailableCount": 1, "items": [{ "idSuffix": "123456", "status": "available", "grantedAt": null, "expiresAt": "2026-11-07T07:55:00+08:00", "title": "Full reset" }], "fetchedAt": "2026-10-24T14:20:39+08:00" },
   "session": { "isActive": true, "label": "当前会话", "model": "gpt-6.1-sol", "effort": "xhigh", "serviceTier": "default", "contextTokens": 147000, "contextWindow": 475000, "totalTokens": 1240000, "inputTokens": 1180000, "outputTokens": 58300, "cachedInputTokens": 1020000, "reasoningOutputTokens": 7000, "outputTokensPerSecond": 42.3, "medianOutputTokensPerSecond": 45.1, "ttftMs": 3900, "turnCount": 12, "routeMismatch": false },
@@ -123,6 +123,51 @@ export const mockSingleSourceSnapshot: UsageSnapshot = {
   },
 };
 
+/**
+ * The reset cards could not be read.
+ *
+ * The payload still carries the cards of the last successful read, so the
+ * panel has to show a dash instead of a card list that looks real.
+ */
+export const mockCreditsErrorSnapshot: UsageSnapshot = {
+  ...mockSnapshot,
+  freshness: { ...mockSnapshot.freshness, resetCredits: "error" },
+};
+
+/**
+ * A strong severity without the source's own confirmation.
+ *
+ * The tone of a signal needs all three conditions, so this record must not
+ * be shown as a strong signal.
+ */
+export const mockStrongUnverifiedSnapshot: UsageSnapshot = {
+  ...mockSnapshot,
+  resetRadar: {
+    ...mockSnapshot.resetRadar,
+    latestConfirmed: {
+      ...mockSnapshot.resetRadar.latestConfirmed!,
+      verified: false,
+    },
+  },
+};
+
+/**
+ * A group whose second confirming source is the official status.
+ *
+ * The official status never confirms a reset, so the group stays a single
+ * source.
+ */
+export const mockStatusConfirmingSnapshot: UsageSnapshot = {
+  ...mockSnapshot,
+  resetRadar: {
+    ...mockSnapshot.resetRadar,
+    latestConfirmed: {
+      ...mockSnapshot.resetRadar.latestConfirmed!,
+      confirmingSources: ["AI 哨兵记录", "官方状态"],
+    },
+  },
+};
+
 /** Every fixture the mock host can serve, keyed by the `fixture` query. */
 export const mockSnapshots: Record<string, UsageSnapshot> = {
   default: mockSnapshot,
@@ -132,4 +177,7 @@ export const mockSnapshots: Record<string, UsageSnapshot> = {
   incident: mockIncidentSnapshot,
   "degraded-source": mockDegradedSourceSnapshot,
   "single-source": mockSingleSourceSnapshot,
+  "credits-error": mockCreditsErrorSnapshot,
+  "strong-unverified": mockStrongUnverifiedSnapshot,
+  "status-confirming": mockStatusConfirmingSnapshot,
 };

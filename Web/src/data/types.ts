@@ -10,12 +10,14 @@ export type DataState = "fresh" | "stale" | "loading" | "error";
 export type HealthStatus = "normal" | "suspected" | "degraded" | "insufficient";
 export type SourceState = "ok" | "degraded" | "down";
 
-/** The four areas that carry their own freshness state. */
+/** The areas that carry their own freshness state. */
 export interface Freshness {
   quota: DataState;
   session: DataState;
   account: DataState;
   sources: DataState;
+  /** The reset cards; older payloads may omit it. */
+  resetCredits?: DataState;
 }
 
 export interface HealthSignal {

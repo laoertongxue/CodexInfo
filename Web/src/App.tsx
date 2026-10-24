@@ -152,6 +152,17 @@ function Panel({
   const sessionUsable = usable(snapshot.freshness.session);
   const accountUsable = usable(snapshot.freshness.account);
   const sourcesUsable = usable(snapshot.freshness.sources);
+  // The reset cards carry their own state, so a failed read shows a dash
+  // instead of an empty list that looks like a real zero.
+  const creditsUsable = usable(snapshot.freshness.resetCredits ?? "fresh");
+  const quotaTone =
+    !quotaUsable || quota.weeklyRemainingPercent == null
+      ? ""
+      : quota.weeklyRemainingPercent < 10
+        ? "quota-critical"
+        : quota.weeklyRemainingPercent < 30
+          ? "quota-low"
+          : "";
 
   const contextPercent =
     sessionUsable && session.contextWindow && session.contextTokens
@@ -174,6 +185,9 @@ function Panel({
         <button className="ghost" onClick={() => host.current?.refresh()}>
           刷新
         </button>
+        <button className="ghost" onClick={() => host.current?.openSettings()} aria-label="设置">
+          设置
+        </button>
         {mode !== "mcp" && (
           <button className="close" onClick={() => host.current?.close()} aria-label="关闭">
             ×
@@ -187,7 +201,7 @@ function Panel({
             <span>
               周额度 <FreshnessHint state={snapshot.freshness.quota} />
             </span>
-            <strong data-testid="weekly-quota">
+            <strong data-testid="weekly-quota" className={quotaTone}>
               {quotaUsable && quota.weeklyRemainingPercent != null ? `剩余 ${quota.weeklyRemainingPercent}%` : DASH}
             </strong>
           </div>
@@ -204,24 +218,34 @@ function Panel({
 
         <Section id="reset-credit">
           <div className="row">
-            <strong>重置卡</strong>
-            <strong data-testid="reset-credit-count">{credits.availableCount} 张</strong>
+            <strong>
+              重置卡 <FreshnessHint state={snapshot.freshness.resetCredits ?? "fresh"} />
+            </strong>
+            <strong data-testid="reset-credit-count">{creditsUsable ? `${credits.availableCount} 张` : DASH}</strong>
           </div>
-          {credits.items.length === 0 ? (
+          {!creditsUsable ? (
+            <div className="tiny muted">重置卡数据不可用</div>
+          ) : credits.items.length === 0 ? (
             <div className="tiny muted">暂无可用重置卡</div>
           ) : (
-            credits.items.map((item, index) => (
-              <div className="row tiny" key={item.idSuffix}>
-                <span className="muted">
-                  第 {index + 1} 张 · {item.status === "available" ? "可用" : item.status}
-                </span>
-                <span className="right">
-                  {formatDateTime(item.expiresAt)} 到期
-                  <br />
-                  余 {formatRemaining(item.expiresAt, now)}
-                </span>
-              </div>
-            ))
+            credits.items.map((item, index) => {
+              const hours = item.expiresAt
+                ? (new Date(item.expiresAt).getTime() - now) / 3_600_000
+                : null;
+              const urgency = hours == null ? "" : hours < 24 ? "card-critical" : hours < 72 ? "card-urgent" : "";
+              return (
+                <div className="row tiny" key={item.idSuffix}>
+                  <span className="muted">
+                    第 {index + 1} 张 · {item.status === "available" ? "可用" : item.status}
+                  </span>
+                  <span className={`right ${urgency}`}>
+                    {formatDateTime(item.expiresAt)} 到期
+                    <br />
+                    余 {formatRemaining(item.expiresAt, now)}
+                  </span>
+                </div>
+              );
+            })
           )}
         </Section>
 
@@ -294,11 +318,16 @@ function Panel({
             <span>上次扫描 {sourcesUsable ? formatDateTime(radar.lastScanAt) : DASH}</span>
             <span>下次 {sourcesUsable ? formatDateTime(radar.nextScanAt) : DASH}</span>
           </div>
-          <button className="link" onClick={() => setSourcesOpen((value) => !value)}>
+          <button
+            className="link"
+            aria-expanded={sourcesOpen}
+            aria-controls="radar-sources"
+            onClick={() => setSourcesOpen((value) => !value)}
+          >
             {sourcesOpen ? "收起" : "来源健康与近期记录"}
           </button>
           {sourcesOpen && (
-            <div className="sources" data-testid="radar-sources">
+            <div className="sources" id="radar-sources" data-testid="radar-sources">
               {radar.sources.map((source) => (
                 <div className="row tiny" key={source.sourceId}>
                   <span>{source.sourceName}</span>
@@ -326,6 +355,8 @@ function Panel({
             <button
               className={`pill ${health.status}`}
               data-testid="health-verdict"
+              aria-expanded={healthOpen}
+              aria-controls="health-evidence"
               onClick={() => setHealthOpen((value) => !value)}
             >
               {HEALTH_LABEL[health.status]}
@@ -339,7 +370,7 @@ function Panel({
             {health.disclaimer}
           </div>
           {healthOpen && (
-            <div className="evidence" data-testid="health-evidence">
+            <div className="evidence" id="health-evidence" data-testid="health-evidence">
               <div className="tiny muted">
                 基线：近 {health.baselineWindowDays} 天 · {health.model ?? DASH} · {health.effort ?? DASH}
               </div>

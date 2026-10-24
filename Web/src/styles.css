@@ -2,17 +2,27 @@
   color-scheme: light dark;
   --bg: #ffffff;
   --fg: #1b1b1b;
-  --muted: #8b8b87;
+  --muted: #6f6f6a;
   --line: #ededeb;
   --card: #fafaf8;
-  --accent: #2e9d6b;
-  --warn: #b26a12;
-  --danger: #c2413b;
-  --new: #4b86f7;
+  --accent: #1f7a53;
+  --warn: #8a5300;
+  --danger: #b3261e;
+  --new: #1a56c4;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #1c1c1e; --fg: #f2f2f7; --muted: #8e8e93; --line: #333336; --card: #242426; }
+  :root {
+    --bg: #1c1c1e;
+    --fg: #f2f2f7;
+    --muted: #a9a9ae;
+    --line: #333336;
+    --card: #242426;
+    --accent: #6fd6a8;
+    --warn: #f0b357;
+    --danger: #ff8f85;
+    --new: #86b6ff;
+  }
 }
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; min-height: 100%; background: transparent; color: var(--fg); }
@@ -53,3 +63,9 @@ html, body, #root { margin: 0; min-height: 100%; background: transparent; color:
 .tone-strong { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .tone-degraded { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
 .tone-incident { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+
+/* The urgency of the quota and of a reset card. */
+.quota-low { color: var(--warn); }
+.quota-critical { color: var(--danger); }
+.card-urgent { color: var(--warn); }
+.card-critical { color: var(--danger); }
