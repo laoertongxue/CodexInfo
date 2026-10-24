@@ -1628,6 +1628,169 @@ func registerCoreTests() {
         let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
         context.expectEqual(signals.first?.rawHash, PayloadHash.short(json.data(using: .utf8)!))
     }
+
+    test("SnapshotBuilder combines services and marks stale data") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let builder = SnapshotBuilder(
+            quota: StubQuotaProvider(snapshot: QuotaSnapshot(
+                planType: "pro", weeklyRemainingPercent: 84,
+                weeklyResetsAt: now.addingTimeInterval(86_400), source: .official,
+                fetchedAt: now.addingTimeInterval(-600)
+            )),
+            credits: StubCreditsProvider(snapshot: ResetCreditsSnapshot(
+                availableCount: 1, reportedAvailableCount: 1, items: [], fetchedAt: now
+            )),
+            sessions: StubSessionProvider(snapshot: SessionSnapshot(
+                isActive: true, label: "当前会话", model: "gpt-6.1-sol", effort: "xhigh",
+                serviceTier: "default", contextTokens: 120, contextWindow: 475_000,
+                totalTokens: 120, inputTokens: 100, outputTokens: 20,
+                cachedInputTokens: 80, reasoningOutputTokens: 0,
+                outputTokensPerSecond: 42.3, medianOutputTokensPerSecond: 45.1,
+                ttftMs: 3_900, turnCount: 1, routeMismatch: false
+            ), turns: []),
+            account: StubAccountProvider(snapshot: AccountSnapshot(
+                todayTokens: 1_000, totalTokens: 2_000, source: "local", updatedAt: now
+            )),
+            radar: StubRadarProvider(snapshot: .empty)
+        )
+        let snapshot = await builder.build(now: now)
+        context.expectEqual(snapshot.quota.weeklyRemainingPercent, 84)
+        context.expectEqual(snapshot.freshness.quota, .stale)
+        context.expectEqual(snapshot.session.label, "当前会话")
+        // The account was updated with the snapshot, so it is still fresh.
+        context.expectEqual(snapshot.freshness.account, .fresh)
+        // The radar was never scanned, so it has no data at all.
+        context.expectEqual(snapshot.freshness.sources, .error)
+        // The label of the account says which source the numbers came from.
+        context.expectEqual(snapshot.account.source, "local")
+        context.expectEqual(snapshot.resetCredits.availableCount, 1)
+    }
+
+    test("SnapshotBuilder marks data inside the freshness window as fresh") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let builder = SnapshotBuilder(
+            quota: StubQuotaProvider(snapshot: QuotaSnapshot(
+                planType: "pro", weeklyRemainingPercent: 84,
+                weeklyResetsAt: now.addingTimeInterval(86_400), source: .official,
+                fetchedAt: now.addingTimeInterval(-60)
+            )),
+            credits: StubCreditsProvider(snapshot: nil),
+            sessions: StubSessionProvider(snapshot: nil, turns: []),
+            account: StubAccountProvider(snapshot: nil),
+            radar: StubRadarProvider(snapshot: .empty)
+        )
+        let snapshot = await builder.build(now: now)
+        context.expectEqual(snapshot.freshness.quota, .fresh)
+    }
+
+    test("SnapshotBuilder reports an error for an area without data") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let builder = SnapshotBuilder(
+            quota: StubQuotaProvider(snapshot: nil),
+            credits: StubCreditsProvider(snapshot: nil),
+            sessions: StubSessionProvider(snapshot: nil, turns: []),
+            account: StubAccountProvider(snapshot: nil),
+            radar: StubRadarProvider(snapshot: .empty)
+        )
+        let snapshot = await builder.build(now: now)
+        context.expectEqual(snapshot.freshness.quota, .error)
+        context.expectEqual(snapshot.freshness.session, .error)
+        context.expectEqual(snapshot.freshness.account, .error)
+        context.expectEqual(snapshot.freshness.sources, .error)
+        // The areas without data keep their placeholders instead of faking numbers.
+        context.expectEqual(snapshot.quota.weeklyRemainingPercent, nil)
+        context.expectEqual(snapshot.session.label, "最近会话")
+        context.expectEqual(snapshot.account.todayTokens, nil)
+        context.expectEqual(snapshot.account.source, "local")
+    }
+
+    test("SnapshotBuilder hands the configured window and minimum to the health verdict") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        // Two turns outside the 7 day window and three turns inside the last day.
+        let turns = [
+            makeTurn(id: "old-1", completedAt: now.addingTimeInterval(-10 * 86_400)),
+            makeTurn(id: "old-2", completedAt: now.addingTimeInterval(-10 * 86_400 + 60)),
+            makeTurn(id: "new-1", completedAt: now.addingTimeInterval(-7_200)),
+            makeTurn(id: "new-2", completedAt: now.addingTimeInterval(-3_600)),
+            makeTurn(id: "new-3", completedAt: now.addingTimeInterval(-600))
+        ]
+        let builder = SnapshotBuilder(
+            quota: StubQuotaProvider(snapshot: nil),
+            credits: StubCreditsProvider(snapshot: nil),
+            sessions: StubSessionProvider(snapshot: nil, turns: turns),
+            account: StubAccountProvider(snapshot: nil),
+            radar: StubRadarProvider(snapshot: .empty)
+        )
+        // The 30 day window holds the two old turns, so they can carry the baseline.
+        let wide = await builder.build(now: now, windowDays: 30, minimumTurns: 2)
+        context.expectEqual(wide.health.baselineWindowDays, 30)
+        context.expectEqual(wide.health.sampleTurns, 2)
+        context.expectEqual(wide.health.status, .normal)
+        // The 7 day window drops them, so the baseline stays empty.
+        let narrow = await builder.build(now: now, windowDays: 7, minimumTurns: 2)
+        context.expectEqual(narrow.health.baselineWindowDays, 7)
+        context.expectEqual(narrow.health.sampleTurns, 0)
+        context.expectEqual(narrow.health.status, .insufficient)
+        // A minimum of eight turns is more than the sample holds.
+        let strict = await builder.build(now: now, windowDays: 30, minimumTurns: 8)
+        context.expectEqual(strict.health.sampleTurns, 2)
+        context.expectEqual(strict.health.status, .insufficient)
+    }
+
+    test("SnapshotStore round-trips atomically") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = SnapshotStore(directory: directory)
+        let snapshot = UsageSnapshot(
+            generatedAt: Date(timeIntervalSince1970: 1_790_000_000),
+            freshness: Freshness(quota: .fresh, session: .fresh, account: .fresh, sources: .fresh),
+            quota: QuotaSnapshot(planType: "pro", weeklyRemainingPercent: 84, weeklyResetsAt: nil, source: .official, fetchedAt: Date(timeIntervalSince1970: 1_790_000_000)),
+            resetCredits: ResetCreditsSnapshot(availableCount: 0, reportedAvailableCount: 0, items: [], fetchedAt: Date(timeIntervalSince1970: 1_790_000_000)),
+            session: SessionSnapshot(isActive: false, label: "最近会话", model: nil, effort: nil, serviceTier: nil, contextTokens: nil, contextWindow: nil, totalTokens: nil, inputTokens: nil, outputTokens: nil, cachedInputTokens: nil, reasoningOutputTokens: nil, outputTokensPerSecond: nil, medianOutputTokensPerSecond: nil, ttftMs: nil, turnCount: 0, routeMismatch: false),
+            account: AccountSnapshot(todayTokens: nil, totalTokens: nil, source: "local", updatedAt: Date(timeIntervalSince1970: 1_790_000_000)),
+            health: .empty,
+            resetRadar: .empty
+        )
+        try store.save(snapshot)
+        let loaded = try store.load(maxAge: 60, now: Date(timeIntervalSince1970: 1_790_000_030))
+        context.expectEqual(loaded?.quota.weeklyRemainingPercent, 84)
+        context.expectEqual(loaded, snapshot)
+        let stale = try store.load(maxAge: 10, now: Date(timeIntervalSince1970: 1_790_000_100))
+        context.expectEqual(stale, nil)
+    }
+
+    test("SnapshotStore returns nil for a missing or unreadable file") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = SnapshotStore(directory: directory)
+        context.expectEqual(try store.load(maxAge: 60, now: Date()), nil)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("not a snapshot".utf8).write(to: directory.appendingPathComponent("snapshot.json"))
+        context.expectEqual(try store.load(maxAge: 60, now: Date()), nil)
+    }
+
+    test("SnapshotStore writes ISO-8601 dates and camelCase keys") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = SnapshotStore(directory: directory)
+        let snapshot = UsageSnapshot(
+            generatedAt: Date(timeIntervalSince1970: 1_790_000_000),
+            freshness: Freshness(quota: .fresh, session: .fresh, account: .fresh, sources: .fresh),
+            quota: QuotaSnapshot(planType: "pro", weeklyRemainingPercent: 84, weeklyResetsAt: nil, source: .official, fetchedAt: Date(timeIntervalSince1970: 1_790_000_000)),
+            resetCredits: ResetCreditsSnapshot(availableCount: 0, reportedAvailableCount: 0, items: [], fetchedAt: Date(timeIntervalSince1970: 1_790_000_000)),
+            session: SessionSnapshot(isActive: false, label: "最近会话", model: nil, effort: nil, serviceTier: nil, contextTokens: nil, contextWindow: nil, totalTokens: nil, inputTokens: nil, outputTokens: nil, cachedInputTokens: nil, reasoningOutputTokens: nil, outputTokensPerSecond: nil, medianOutputTokensPerSecond: nil, ttftMs: nil, turnCount: 0, routeMismatch: false),
+            account: AccountSnapshot(todayTokens: nil, totalTokens: nil, source: "local", updatedAt: Date(timeIntervalSince1970: 1_790_000_000)),
+            health: .empty,
+            resetRadar: .empty
+        )
+        try store.save(snapshot)
+        let text = try String(contentsOf: directory.appendingPathComponent("snapshot.json"), encoding: .utf8)
+        context.expectTrue(text.contains("\"generatedAt\""), "the key is not camelCase")
+        context.expectTrue(text.contains("\"resetCredits\""), "the key is not camelCase")
+        context.expectTrue(text.contains("\"weeklyRemainingPercent\""), "the key is not camelCase")
+        context.expectTrue(text.contains("\"2026-09-21T14:13:20Z\""), "the date is not ISO-8601")
+        context.expectTrue(text.contains("\"fresh\""), "the state is not a plain string")
+    }
 }
 
 /// A source that always returns the same signals.
@@ -1923,6 +2086,38 @@ struct StubLocalAccount: AccountTotalsProviding {
     func accountTotals(now: Date, calendar: Calendar) async -> (today: Int, total: Int) {
         (today, total)
     }
+}
+
+/// A quota provider that returns a fixed snapshot.
+struct StubQuotaProvider: QuotaSnapshotProviding {
+    let snapshot: QuotaSnapshot?
+    func quotaSnapshot(now: Date) async -> QuotaSnapshot? { snapshot }
+}
+
+/// A reset credit provider that returns a fixed snapshot.
+struct StubCreditsProvider: ResetCreditsProviding {
+    let snapshot: ResetCreditsSnapshot?
+    func creditsSnapshot(now: Date) async -> ResetCreditsSnapshot? { snapshot }
+}
+
+/// A session provider that returns a fixed snapshot and a fixed turn list.
+struct StubSessionProvider: SessionSnapshotProviding {
+    let snapshot: SessionSnapshot?
+    let turns: [TurnMetrics]
+    func currentSnapshot(now: Date) async -> SessionSnapshot? { snapshot }
+    func allTurns(now: Date) async -> [TurnMetrics] { turns }
+}
+
+/// An account provider that returns a fixed snapshot.
+struct StubAccountProvider: AccountSnapshotProviding {
+    let snapshot: AccountSnapshot?
+    func accountSnapshot(now: Date) async -> AccountSnapshot? { snapshot }
+}
+
+/// A reset radar provider that returns a fixed snapshot.
+struct StubRadarProvider: ResetRadarProviding {
+    let snapshot: ResetRadarSnapshot
+    func radarSnapshot(now: Date) async -> ResetRadarSnapshot { snapshot }
 }
 
 /// A Gregorian calendar pinned to the given time zone.
