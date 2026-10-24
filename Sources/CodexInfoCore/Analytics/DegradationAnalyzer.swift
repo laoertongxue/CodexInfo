@@ -15,6 +15,7 @@ public enum DegradationAnalyzer {
         baselineTurns: [TurnMetrics],
         currentTurns: [TurnMetrics],
         routeMismatch: Bool,
+        routeDowngrade: Bool = false,
         now: Date,
         windowDays: Int = 7,
         minimumTurns: Int = 8,
@@ -107,14 +108,16 @@ public enum DegradationAnalyzer {
             )
         }
         if routeMismatch {
+            // A mismatch is only evidence. Only a comparable downgrade counts
+            // toward the degraded verdict (design 5.6.3).
             signals.append(
                 HealthSignal(
                     id: .route,
-                    label: "路由不一致",
+                    label: routeDowngrade ? "路由降档" : "路由不一致",
                     current: 1,
                     baseline: 0,
                     flagged: true,
-                    detail: "实际模型/档位与选择不一致"
+                    detail: routeDowngrade ? "实际档位低于选择的档位" : "实际模型/档位与选择不一致"
                 )
             )
         }
@@ -124,12 +127,14 @@ public enum DegradationAnalyzer {
         let persistent = performanceSignals.contains { metric in
             evaluations.filter { $0.judgements[metric] == .hit }.count >= 2
         }
-        let totalSignals = performanceHits + (routeMismatch ? 1 : 0)
+        // A route mismatch alone never counts as a signal: it is reported as
+        // evidence. Only a comparable downgrade counts toward the verdict.
+        let totalSignals = performanceHits + (routeDowngrade ? 1 : 0)
 
         let status: HealthStatus
         if totalSignals >= 3, persistent, recent.count >= 3 {
             status = .degraded
-        } else if totalSignals >= 2, performanceHits >= 1 {
+        } else if performanceHits >= 1, totalSignals >= 2 || routeMismatch {
             status = .suspected
         } else {
             status = .normal

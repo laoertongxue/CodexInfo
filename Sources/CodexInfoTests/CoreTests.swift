@@ -569,6 +569,24 @@ func registerCoreTests() {
         context.expectEqual(snapshot?.totalTokens, 120)
     }
 
+    test("SessionIndexer reports a comparable route downgrade") { context in
+        // The user selected `xhigh`, the turn ran with `medium`: the efforts are
+        // comparable, so the route is a downgrade and not only a mismatch.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let session = directory.appendingPathComponent("downgrade.jsonl")
+        let content = #"{"timestamp":"2026-10-24T02:48:18.321Z","type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model":"gpt-6.1-sol","model_provider_id":"openai","service_tier":"default","reasoning_effort":"xhigh"}}}"# + "\n"
+            + #"{"timestamp":"2026-10-24T02:48:19.000Z","type":"turn_context","payload":{"turn_id":"turn-1","model":"gpt-6.1-sol","effort":"medium"}}"# + "\n"
+        try content.write(to: session, atomically: true, encoding: .utf8)
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let indexes = await indexer.scan()
+        context.expectEqual(indexes.first?.routeMismatch, true)
+        context.expectEqual(indexes.first?.routeDowngrade, true)
+    }
+
     test("SessionIndexer clears the active turn after an aborted turn") { context in
         // An aborted turn never reaches `task_complete`. The session must not
         // stay pinned to "生成中" forever.
@@ -1017,6 +1035,82 @@ func registerCoreTests() {
         )
         context.expectEqual(result.status, .suspected)
         context.expectEqual(result.signals.first { $0.id == .route }?.flagged, true)
+    }
+
+    test("RouteComparison only calls a comparable route a downgrade") { context in
+        // The reasoning efforts have a fixed order (design 5.6.3).
+        context.expectEqual(
+            RouteComparison.isDowngrade(
+                actualModel: "gpt-6.1-sol", actualEffort: "medium",
+                selectedModel: "gpt-6.1-sol", selectedEffort: "xhigh"
+            ),
+            true, "a lower effort is a downgrade"
+        )
+        context.expectEqual(
+            RouteComparison.isDowngrade(
+                actualModel: "gpt-6.1-sol", actualEffort: "xhigh",
+                selectedModel: "gpt-6.1-sol", selectedEffort: "medium"
+            ),
+            false, "a higher effort is no downgrade"
+        )
+        // A model swap has no comparable tier, so it is only a mismatch.
+        context.expectEqual(
+            RouteComparison.isDowngrade(
+                actualModel: "gpt-6.1", actualEffort: "xhigh",
+                selectedModel: "gpt-6.1-sol", selectedEffort: "xhigh"
+            ),
+            false, "a model swap is no downgrade"
+        )
+        context.expectEqual(
+            RouteComparison.isDowngrade(
+                actualModel: "gpt-6.1-mini", actualEffort: "xhigh",
+                selectedModel: "gpt-6.1", selectedEffort: "xhigh"
+            ),
+            true, "a lower tier of the same family is a downgrade"
+        )
+        context.expectEqual(
+            RouteComparison.isDowngrade(
+                actualModel: "gpt-6.1", actualEffort: "xhigh",
+                selectedModel: "gpt-6.1-mini", selectedEffort: "xhigh"
+            ),
+            false, "a higher tier of the same family is no downgrade"
+        )
+        // An unknown tier cannot be compared.
+        context.expectEqual(
+            RouteComparison.isDowngrade(
+                actualModel: "gpt-5", actualEffort: "xhigh",
+                selectedModel: "gpt-6.1-sol", selectedEffort: "xhigh"
+            ),
+            false, "another family is no downgrade"
+        )
+    }
+
+    test("DegradationAnalyzer keeps a model swap out of the degraded verdict") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 3, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 2)
+        // A model swap is a mismatch. The tiers are not comparable, so the
+        // mismatch is only evidence and never counts toward the verdict.
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current,
+            routeMismatch: true, routeDowngrade: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .suspected, "two performance hits plus a mismatch")
+        context.expectEqual(result.signals.first { $0.id == .route }?.label, "路由不一致")
+    }
+
+    test("DegradationAnalyzer counts a comparable route downgrade toward the degraded verdict") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 3, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 2)
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current,
+            routeMismatch: true, routeDowngrade: true,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .degraded, "two performance hits plus a downgrade")
+        context.expectEqual(result.signals.first { $0.id == .route }?.label, "路由降档")
     }
 
     test("DegradationAnalyzer reports insufficient when no turn finished in the last 24 hours") { context in

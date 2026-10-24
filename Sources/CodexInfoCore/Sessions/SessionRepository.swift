@@ -71,7 +71,8 @@ public actor SessionRepository: SessionSnapshotProviding {
             medianOutputTokensPerSecond: median,
             ttftMs: lastTurn?.ttftMs,
             turnCount: latest.turns.count,
-            routeMismatch: latest.routeMismatch
+            routeMismatch: latest.routeMismatch,
+            routeDowngrade: latest.routeDowngrade
         )
     }
 

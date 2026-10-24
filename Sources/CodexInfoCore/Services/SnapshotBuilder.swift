@@ -123,6 +123,7 @@ public actor SnapshotBuilder {
             baselineTurns: baselineTurns,
             currentTurns: currentTurns,
             routeMismatch: sessionSnapshot.routeMismatch,
+            routeDowngrade: sessionSnapshot.routeDowngrade,
             now: now,
             windowDays: windowDays,
             minimumTurns: minimumTurns

@@ -80,6 +80,8 @@ export interface UsageSnapshot {
     ttftMs?: number | null;
     turnCount: number;
     routeMismatch: boolean;
+    /** The route runs on a comparable but lower tier than the selection. */
+    routeDowngrade?: boolean;
   };
   account: {
     todayTokens?: number | null;

@@ -171,6 +171,9 @@ public struct SessionIndex: Codable, Equatable, Sendable {
     public let selectedEffort: String?
     public let selectedServiceTier: String?
     public let routeMismatch: Bool
+    /// Whether the route of the session is comparable and lower than the route
+    /// the user selected (design 5.6.3).
+    public let routeDowngrade: Bool
 
     public init(
         path: String,
@@ -186,7 +189,8 @@ public struct SessionIndex: Codable, Equatable, Sendable {
         selectedModel: String?,
         selectedEffort: String?,
         selectedServiceTier: String?,
-        routeMismatch: Bool
+        routeMismatch: Bool,
+        routeDowngrade: Bool = false
     ) {
         self.path = path
         self.modifiedAt = modifiedAt
@@ -202,6 +206,7 @@ public struct SessionIndex: Codable, Equatable, Sendable {
         self.selectedEffort = selectedEffort
         self.selectedServiceTier = selectedServiceTier
         self.routeMismatch = routeMismatch
+        self.routeDowngrade = routeDowngrade
     }
 }
 
@@ -223,6 +228,9 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
     public let ttftMs: Double?
     public let turnCount: Int
     public let routeMismatch: Bool
+    /// Whether the route of the session is comparable and lower than the route
+    /// the user selected (design 5.6.3).
+    public let routeDowngrade: Bool
 
     public init(
         isActive: Bool,
@@ -241,7 +249,8 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         medianOutputTokensPerSecond: Double?,
         ttftMs: Double?,
         turnCount: Int,
-        routeMismatch: Bool
+        routeMismatch: Bool,
+        routeDowngrade: Bool = false
     ) {
         self.isActive = isActive
         self.label = label
@@ -260,6 +269,7 @@ public struct SessionSnapshot: Codable, Equatable, Sendable {
         self.ttftMs = ttftMs
         self.turnCount = turnCount
         self.routeMismatch = routeMismatch
+        self.routeDowngrade = routeDowngrade
     }
 }
 

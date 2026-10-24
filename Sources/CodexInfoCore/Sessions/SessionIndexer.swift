@@ -140,6 +140,14 @@ public actor SessionIndexer {
             let modelMismatch = latestTurn?.model != nil && settings?.model != nil && latestTurn?.model != settings?.model
             let effortMismatch = latestTurn?.reasoningEffort != nil && settings?.reasoningEffort != nil && latestTurn?.reasoningEffort != settings?.reasoningEffort
             let routeMismatch = modelMismatch || effortMismatch
+            // A downgrade is only decided when the two routes are comparable
+            // (design 5.6.3). A model swap is a mismatch, not a downgrade.
+            let routeDowngrade = RouteComparison.isDowngrade(
+                actualModel: latestTurn?.model,
+                actualEffort: latestTurn?.reasoningEffort,
+                selectedModel: settings?.model,
+                selectedEffort: settings?.reasoningEffort
+            )
             let index = SessionIndex(
                 path: path,
                 modifiedAt: modifiedAt,
@@ -155,7 +163,8 @@ public actor SessionIndexer {
                 selectedModel: settings?.model,
                 selectedEffort: settings?.reasoningEffort,
                 selectedServiceTier: settings?.serviceTier,
-                routeMismatch: routeMismatch
+                routeMismatch: routeMismatch,
+                routeDowngrade: routeDowngrade
             )
             results.append(index)
             if let threadTotal { threadTotals[path] = threadTotal }
