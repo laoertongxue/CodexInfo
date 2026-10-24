@@ -1791,6 +1791,18 @@ func registerCoreTests() {
         context.expectTrue(text.contains("\"2026-09-21T14:13:20Z\""), "the date is not ISO-8601")
         context.expectTrue(text.contains("\"fresh\""), "the state is not a plain string")
     }
+
+    test("WebAssets carries the built panel and its CSP") { context in
+        let html = WebAssets.panelHTML
+        context.expectTrue(!html.isEmpty, "the generated panel is empty")
+        context.expectTrue(html.contains("Content-Security-Policy"), "the panel has no CSP meta")
+        context.expectTrue(html.contains("用量"), "the panel title is missing")
+        context.expectTrue(html.contains("周额度"), "the quota card is missing")
+        context.expectTrue(html.contains("重置追踪"), "the radar card is missing")
+        context.expectTrue(html.contains("id=\"root\""), "the mount point is missing")
+        context.expectTrue(!html.contains("<script src="), "the panel carries an external script")
+        context.expectTrue(!html.contains("<link rel=\"stylesheet\""), "the panel carries an external style")
+    }
 }
 
 /// A source that always returns the same signals.

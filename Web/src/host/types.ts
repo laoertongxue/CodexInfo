@@ -11,6 +11,16 @@ export interface HostHandlers {
   onError: (message: string) => void;
 }
 
+/**
+ * What every host offers the panel.
+ *
+ * - `native` — the menu bar app; the page posts `ready`, `refresh`, `scan`,
+ *   `openURL`, `openSettings` and `close` over the `codexInfo` bridge.
+ * - `mcp` — the MCP App; the snapshot comes from the `get_usage_snapshot`
+ *   tool, a scan from `scan_reset_sources`, and a link opens through
+ *   `openLink`. The host knows no settings window and no close button.
+ * - `mock` — the fixtures, for the browser and for the tests.
+ */
 export interface Host {
   mode: "native" | "mcp" | "mock";
   start(handlers: HostHandlers): Promise<void>;
