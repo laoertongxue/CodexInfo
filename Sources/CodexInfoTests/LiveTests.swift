@@ -59,6 +59,40 @@ func registerLiveTests() {
         context.expectEqual(SystemBrowserDashboard.dashboardURL.absoluteString, "codexinfo://show")
     }
 
+    test("The dashboard refuses to open when the app is not running") { context in
+        // Design 6.7: the tool answers with an install and start hint instead
+        // of claiming that the panel is open.
+        let opened = OpenedURLs()
+        let dashboard = SystemBrowserDashboard(
+            running: StubRunningApplications(running: false),
+            opener: { url in opened.record(url) }
+        )
+        do {
+            try await dashboard.openDashboard()
+            context.fail("the dashboard opened without the app")
+        } catch let error as DashboardError {
+            context.expectEqual(error, .appNotRunning)
+            context.expectTrue(
+                (error.errorDescription ?? "").contains("没有运行"),
+                "the reason names the missing app"
+            )
+        } catch {
+            context.fail("the dashboard opened without the app: \(error)")
+        }
+        context.expectEqual(opened.urls.isEmpty, true, "nothing was opened")
+    }
+
+    test("The dashboard opens the panel when the app runs") { context in
+        let opened = OpenedURLs()
+        let dashboard = SystemBrowserDashboard(
+            running: StubRunningApplications(running: true),
+            opener: { url in opened.record(url) }
+        )
+        try await dashboard.openDashboard()
+        context.expectEqual(opened.urls, ["codexinfo://show"])
+        context.expectEqual(SystemBrowserDashboard.bundleIdentifier, "com.laoer.codexinfo")
+    }
+
     test("MCP stdio server answers every request with one line") { context in
         let input = ScriptedLineReader(lines: [
             #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
@@ -249,9 +283,33 @@ final class RecordingRadarScanner: ResetRadarScanning, @unchecked Sendable {
     }
 }
 
-/// A dashboard that records how often it was opened.
-final class RecordingDashboard: DashboardOpening, @unchecked Sendable {
+/// The running applications of the system, stubbed for the tests.
+final class StubRunningApplications: ApplicationRunningChecking, @unchecked Sendable {
+    private let running: Bool
+
+    init(running: Bool) {
+        self.running = running
+    }
+
+    func isAppRunning(bundleIdentifier: String) -> Bool { running }
+}
+
+/// The URLs the dashboard handed to the system.
+final class OpenedURLs: @unchecked Sendable {
     private let lock = NSLock()
+    private var _urls: [String] = []
+
+    var urls: [String] {
+        lock.withLock { _urls }
+    }
+
+    func record(_ url: URL) {
+        lock.withLock { _urls.append(url.absoluteString) }
+    }
+}
+
+/// A dashboard that records how often it was opened.
+final class RecordingDashboard: DashboardOpening, @unchecked Sendable {    private let lock = NSLock()
     private var _openCount = 0
 
     var openCount: Int { lock.withLock { _openCount } }

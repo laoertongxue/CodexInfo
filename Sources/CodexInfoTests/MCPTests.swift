@@ -1,5 +1,6 @@
 import Foundation
 import CodexInfoCore
+import CodexInfoLive
 import CodexInfoMCPKit
 
 func registerMCPTests() {
@@ -312,6 +313,25 @@ func registerMCPTests() {
         context.expectEqual(structured["opened"] as? Bool, true)
     }
 
+    test("MCP open_dashboard reports the missing app instead of a success") { context in
+        // Design 6.7: the tool answers with an install and start hint when the
+        // menu bar app is not running.
+        let service = FailingDashboardToolService()
+        let router = MCPRouter(toolService: service, panelHTML: "<html>panel</html>")
+        let responses = await router.handle(line: Data(#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"open_dashboard","arguments":{}}}"#.utf8))
+        guard let data = responses.first,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = object["result"] as? [String: Any] else {
+            context.fail("missing dashboard result")
+            return
+        }
+        context.expectEqual(result["isError"] as? Bool, true, "the tool reports the failure")
+        let content = result["content"] as? [[String: Any]]
+        let text = content?.first?["text"] as? String ?? ""
+        context.expectTrue(text.contains("没有运行"), "the answer names the missing app")
+        context.expectTrue(text.contains("dist/CodexInfo.app"), "the answer carries the install hint")
+    }
+
     test("MCP get_usage_snapshot forwards the refresh flag") { context in
         let service = RecordingMCPToolService()
         let router = MCPRouter(toolService: service, panelHTML: "<html>panel</html>")
@@ -364,6 +384,14 @@ struct FailingMCPToolService: MCPToolService {
     func modelHealth(windowDays: Int, now: Date) async throws -> HealthSnapshot { .empty }
     func scanResetSources(now: Date) async throws -> ResetRadarSnapshot { .empty }
     func openDashboard() async throws {}
+}
+
+/// A service whose dashboard is not there, to prove that the tool reports it.
+struct FailingDashboardToolService: MCPToolService {
+    func usageSnapshot(refresh: Bool, now: Date) async throws -> UsageSnapshot { MCPTestFixtures.snapshot }
+    func modelHealth(windowDays: Int, now: Date) async throws -> HealthSnapshot { .empty }
+    func scanResetSources(now: Date) async throws -> ResetRadarSnapshot { .empty }
+    func openDashboard() async throws { throw DashboardError.appNotRunning }
 }
 
 enum MCPTestFixtures {
