@@ -114,6 +114,40 @@ func registerLiveTests() {
         await server.run(input: input, output: output)
         context.expectEqual(await output.lines.count, 0, "the end of the input ends the server")
     }
+
+    test("LiveEnvironment rebuilds a snapshot for another baseline window") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let moment = Date(timeIntervalSince1970: 1_790_000_000)
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let repository = SessionRepository(indexer: indexer)
+        let builder = SnapshotBuilder(
+            quota: StubQuotaProvider(snapshot: QuotaSnapshot(
+                planType: "pro", weeklyRemainingPercent: 84, weeklyResetsAt: nil,
+                source: .official, fetchedAt: moment
+            )),
+            credits: StubCreditsProvider(snapshot: ResetCreditsSnapshot(
+                availableCount: 0, reportedAvailableCount: 0, items: [], fetchedAt: moment
+            )),
+            sessions: repository,
+            account: StubAccountProvider(snapshot: AccountSnapshot(
+                todayTokens: 1, totalTokens: 2, source: "local", updatedAt: moment
+            )),
+            radar: StubRadarProvider(snapshot: .empty)
+        )
+        let radar = ResetRadarService(sources: [], http: MockHTTPClient(responses: []), interval: 60)
+        let live = LiveEnvironment(
+            store: SnapshotStore(directory: directory, fileName: "snapshot.json"),
+            builder: builder,
+            radar: radar,
+            repository: repository
+        )
+        let weekly = await live.buildSnapshot(now: moment, refresh: false, windowDays: 7)
+        let monthly = await live.buildSnapshot(now: moment, refresh: false, windowDays: 30)
+        context.expectEqual(weekly.health.baselineWindowDays, 7)
+        context.expectEqual(monthly.health.baselineWindowDays, 30)
+    }
 }
 
 /// A snapshot builder that records how it was called.
