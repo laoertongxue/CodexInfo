@@ -14,7 +14,8 @@ public enum OutputRateCalculator {
         let wallMs = max(duration - ttft, 1)
         let generationMs: Double
         if turn.modelItemMs > 0 {
-            generationMs = turn.modelItemMs
+            // Model item time cannot exceed the observable generation window.
+            generationMs = min(turn.modelItemMs, wallMs)
         } else {
             generationMs = max(wallMs - turn.toolMs, 1)
         }

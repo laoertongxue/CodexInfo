@@ -330,10 +330,19 @@ func registerCoreTests() {
         context.expectTrue(abs((rate?.tokensPerSecond ?? 0) - 50) < 0.01)
         context.expectTrue(abs((rate?.reasoningShare ?? 0) - 0.2) < 0.0001)
         context.expectTrue(abs((rate?.toolDensity ?? 0) - 20) < 0.0001)
+
+        let clamped = OutputRateCalculator.rate(for: TurnMetrics(
+            turnId: "turn-clamp", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil,
+            startedAt: nil, completedAt: nil, durationMs: 1_000, ttftMs: 0,
+            inputTokens: 0, cachedInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0,
+            modelItemMs: 2_000, toolMs: 0, toolCallCount: 0, isCompleted: true
+        ))
+        context.expectTrue(abs((clamped?.tokensPerSecond ?? 0) - 100) < 0.01)
+
         context.expectEqual(OutputRateCalculator.medianRate([
-            TurnMetrics(turnId: "a", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil, startedAt: nil, completedAt: nil, durationMs: 1, ttftMs: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0, modelItemMs: 1_000, toolMs: 0, toolCallCount: 0, isCompleted: true),
-            TurnMetrics(turnId: "b", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil, startedAt: nil, completedAt: nil, durationMs: 1, ttftMs: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 20, reasoningOutputTokens: 0, modelItemMs: 1_000, toolMs: 0, toolCallCount: 0, isCompleted: true),
-            TurnMetrics(turnId: "c", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil, startedAt: nil, completedAt: nil, durationMs: 1, ttftMs: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 30, reasoningOutputTokens: 0, modelItemMs: 1_000, toolMs: 0, toolCallCount: 0, isCompleted: true)
+            TurnMetrics(turnId: "a", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil, startedAt: nil, completedAt: nil, durationMs: 1_000, ttftMs: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0, modelItemMs: 1_000, toolMs: 0, toolCallCount: 0, isCompleted: true),
+            TurnMetrics(turnId: "b", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil, startedAt: nil, completedAt: nil, durationMs: 1_000, ttftMs: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 20, reasoningOutputTokens: 0, modelItemMs: 1_000, toolMs: 0, toolCallCount: 0, isCompleted: true),
+            TurnMetrics(turnId: "c", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil, startedAt: nil, completedAt: nil, durationMs: 1_000, ttftMs: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 30, reasoningOutputTokens: 0, modelItemMs: 1_000, toolMs: 0, toolCallCount: 0, isCompleted: true)
         ]), 20)
     }
 
