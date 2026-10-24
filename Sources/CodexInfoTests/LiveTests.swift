@@ -148,6 +148,64 @@ func registerLiveTests() {
         context.expectEqual(weekly.health.baselineWindowDays, 7)
         context.expectEqual(monthly.health.baselineWindowDays, 30)
     }
+test("LiveEnvironment prefers the snapshot of the menu bar app") { context in
+        // Design 6.3: the MCP server reads the snapshot of the app first, so
+        // the menu bar and the plugin show the same numbers.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let moment = Date(timeIntervalSince1970: 1_790_000_000)
+
+        let appStore = SnapshotStore(directory: directory, fileName: SnapshotStore.fileName)
+        try appStore.save(UsageSnapshot(
+            generatedAt: moment,
+            freshness: Freshness(quota: .fresh, session: .fresh, account: .fresh, sources: .fresh),
+            quota: QuotaSnapshot(
+                planType: "pro", weeklyRemainingPercent: 42, weeklyResetsAt: nil,
+                source: .official, fetchedAt: moment
+            ),
+            resetCredits: ResetCreditsSnapshot(
+                availableCount: 0, reportedAvailableCount: 0, items: [], fetchedAt: moment
+            ),
+            session: .empty,
+            account: AccountSnapshot(todayTokens: 1, totalTokens: 2, source: "local", updatedAt: moment),
+            health: .empty,
+            resetRadar: .empty
+        ))
+
+        let mcpStore = SnapshotStore(directory: directory, fileName: SnapshotStore.mcpFileName)
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let repository = SessionRepository(indexer: indexer)
+        let builder = SnapshotBuilder(
+            quota: StubQuotaProvider(snapshot: QuotaSnapshot(
+                planType: "pro", weeklyRemainingPercent: 84, weeklyResetsAt: nil,
+                source: .official, fetchedAt: moment
+            )),
+            credits: StubCreditsProvider(snapshot: ResetCreditsSnapshot(
+                availableCount: 0, reportedAvailableCount: 0, items: [], fetchedAt: moment
+            )),
+            sessions: repository,
+            account: StubAccountProvider(snapshot: AccountSnapshot(
+                todayTokens: 1, totalTokens: 2, source: "local", updatedAt: moment
+            )),
+            radar: StubRadarProvider(snapshot: .empty)
+        )
+        let radar = ResetRadarService(sources: [], http: MockHTTPClient(responses: []), interval: 60)
+        let live = LiveEnvironment(
+            store: mcpStore,
+            builder: builder,
+            radar: radar,
+            repository: repository,
+            appStore: appStore
+        )
+        let snapshot = await live.buildSnapshot(now: moment, refresh: false, windowDays: 7)
+        context.expectEqual(snapshot.quota.weeklyRemainingPercent, 42, "the snapshot of the app wins")
+        context.expectEqual(
+            FileManager.default.fileExists(atPath: mcpStore.fileURL.path),
+            false,
+            "the snapshot of the app is not copied into the own file"
+        )
+    }
 }
 
 /// A snapshot builder that records how it was called.

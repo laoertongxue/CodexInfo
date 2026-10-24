@@ -29,6 +29,12 @@ public protocol ResetRadarScanning: Sendable {
 public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, ResetRadarScanning {
     /// The store the snapshot is written to.
     public let store: SnapshotStore
+    /// The store of the snapshot of the menu bar app.
+    ///
+    /// The MCP server reads this file first (design 6.3), so the menu bar and
+    /// the plugin always show the same numbers. The app itself reads and
+    /// writes the same file.
+    public let appStore: SnapshotStore
     /// The builder that combines the services into one snapshot.
     public let builder: SnapshotBuilder
     /// The radar that scans the four reset sources.
@@ -43,13 +49,17 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
     ///   - builder: the builder of the snapshot.
     ///   - radar: the radar of the reset sources.
     ///   - repository: the repository of the indexed sessions.
+    ///   - appStore: the store of the snapshot of the menu bar app; it
+    ///     defaults to the own store, so the app reads its own file.
     public init(
         store: SnapshotStore,
         builder: SnapshotBuilder,
         radar: ResetRadarService,
-        repository: SessionRepository
+        repository: SessionRepository,
+        appStore: SnapshotStore? = nil
     ) {
         self.store = store
+        self.appStore = appStore ?? store
         self.builder = builder
         self.radar = radar
         self.repository = repository
@@ -63,6 +73,9 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
     public static func live(snapshotFileName: String = SnapshotStore.fileName) -> LiveEnvironment {
         let support = SnapshotStore.defaultDirectory
         let store = SnapshotStore(directory: support, fileName: snapshotFileName)
+        // The snapshot of the menu bar app is read before the own one, so the
+        // plugin and the menu bar show the same numbers (design 6.3).
+        let appStore = SnapshotStore(directory: support, fileName: SnapshotStore.fileName)
         let http = URLSessionHTTPClient()
         let credentials = FileCredentialStore()
         let official = OfficialUsageClient(http: http, credentials: credentials)
@@ -97,13 +110,21 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
         let builder = SnapshotBuilder(
             quota: quota, credits: credits, sessions: repository, account: account, radar: radar
         )
-        return LiveEnvironment(store: store, builder: builder, radar: radar, repository: repository)
+        return LiveEnvironment(
+            store: store,
+            builder: builder,
+            radar: radar,
+            repository: repository,
+            appStore: appStore
+        )
     }
 
     /// Builds the snapshot and writes it to the store.
     ///
     /// A snapshot that is younger than the refresh window is reused, so a
-    /// host that asks twice in a row does not pay for the network twice.
+    /// host that asks twice in a row does not pay for the network twice. The
+    /// snapshot of the menu bar app wins over the own one, so the menu bar
+    /// and the plugin always show the same numbers (design 6.3).
     ///
     /// - Parameters:
     ///   - now: the moment the snapshot belongs to.
@@ -114,13 +135,18 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
         refresh: Bool = false,
         windowDays: Int = 7
     ) async -> UsageSnapshot {
-        if !refresh,
-           let cached = try? store.load(maxAge: AppConstants.refreshQuotaSeconds, now: now),
-           cached.health.baselineWindowDays == windowDays {
-            return cached
+        if !refresh {
+            // A cached snapshot of another baseline window cannot answer this
+            // request, so it is rebuilt instead of returned.
+            if let cached = try? appStore.load(maxAge: AppConstants.refreshQuotaSeconds, now: now),
+               cached.health.baselineWindowDays == windowDays {
+                return cached
+            }
+            if let cached = try? store.load(maxAge: AppConstants.refreshQuotaSeconds, now: now),
+               cached.health.baselineWindowDays == windowDays {
+                return cached
+            }
         }
-        // A cached snapshot of another baseline window cannot answer this
-        // request, so it is rebuilt instead of returned.
         let snapshot = await builder.build(now: now, windowDays: windowDays)
         try? store.save(snapshot)
         return snapshot
