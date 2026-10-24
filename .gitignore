@@ -21,3 +21,6 @@ Tests/Fixtures/private/
 
 # macOS
 .DS_Store
+
+# Local git worktrees
+.worktrees/
