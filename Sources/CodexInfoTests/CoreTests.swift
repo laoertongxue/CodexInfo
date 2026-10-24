@@ -1838,6 +1838,17 @@ func registerCoreTests() {
         context.expectTrue(!html.contains("<link rel=\"stylesheet\""), "the panel carries an external style")
     }
 
+    test("WebAssets carries the re-login hint of the built panel") { context in
+        // The generated asset embeds the built panel. When the panel changes and
+        // the asset is not regenerated, the shipped app keeps the old panel, so
+        // the hint of the re-login state has to be part of the asset.
+        let html = WebAssets.panelHTML
+        context.expectTrue(
+            html.contains("登录已失效"),
+            "the generated panel misses the re-login hint"
+        )
+    }
+
     test("SnapshotBuilder reads the session log once per build") { context in
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

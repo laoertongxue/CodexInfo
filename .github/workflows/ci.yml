@@ -49,6 +49,9 @@ jobs:
       - name: Web build
         run: bash scripts/build-web.sh
 
+      - name: Asset drift check
+        run: git diff --exit-code -- Sources/CodexInfoCore/Generated/WebAssets.swift
+
       - name: Release build of the MCP server
         run: swift build -c release --product codexinfo-mcp
 
