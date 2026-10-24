@@ -89,7 +89,7 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
                 .appendingPathComponent(".codex", isDirectory: true)
         let indexer = SessionIndexer(
             rootURL: codexHome.appendingPathComponent("sessions", isDirectory: true),
-            cacheURL: support.appendingPathComponent("session-index.json")
+            cacheURL: support.appendingPathComponent(SessionIndexer.cacheFileName)
         )
         let repository = SessionRepository(indexer: indexer)
         var quotaFallbacks: [QuotaFallbackProviding] = [SessionQuotaFallback(repository: repository)]
@@ -147,7 +147,13 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
                 return cached
             }
         }
-        let snapshot = await builder.build(now: now, windowDays: windowDays)
+        let snapshot = await builder.build(
+            now: now,
+            windowDays: windowDays,
+            // The verdict uses the tier of the settings, so the plugin and the
+            // menu bar judge the turns the same way.
+            thresholds: SettingsFileStore().load().thresholdTier.thresholds
+        )
         try? store.save(snapshot)
         return snapshot
     }

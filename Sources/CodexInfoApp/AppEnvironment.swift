@@ -23,6 +23,8 @@ final class AppEnvironment: ObservableObject {
     let notifications: NotificationController
     /// The live services of this machine.
     let live: LiveEnvironment
+    /// The cleaner of the local data.
+    private let cleaner: LocalDataCleaner
 
     /// Called with every new snapshot.
     var onSnapshot: ((UsageSnapshot) -> Void)?
@@ -31,10 +33,11 @@ final class AppEnvironment: ObservableObject {
 
     private var refreshTask: Task<Void, Never>?
 
-    init(live: LiveEnvironment = .live()) {
+    init(live: LiveEnvironment = .live(), cleaner: LocalDataCleaner = LocalDataCleaner()) {
         self.live = live
         self.settings = SettingsStore()
         self.notifications = NotificationController()
+        self.cleaner = cleaner
     }
 
     /// Starts the refresh loop and the notifications.
@@ -66,7 +69,8 @@ final class AppEnvironment: ObservableObject {
         let value = await live.builder.build(
             now: Date(),
             windowDays: current.baselineWindowDays,
-            minimumTurns: current.minimumTurns
+            minimumTurns: current.minimumTurns,
+            thresholds: current.thresholdTier.thresholds
         )
         snapshot = value
         do {
@@ -85,5 +89,15 @@ final class AppEnvironment: ObservableObject {
     func scan() async {
         _ = await live.radar.scan(now: Date())
         await refresh()
+    }
+
+    /// Removes the files the app wrote and starts over (design 5.9).
+    ///
+    /// The index, the snapshots and the settings are deleted, so the app
+    /// computes its numbers again from the sources.
+    func clearLocalData() {
+        try? cleaner.clear()
+        settings.reset()
+        Task { await refresh() }
     }
 }

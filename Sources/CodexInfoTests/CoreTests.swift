@@ -2246,6 +2246,55 @@ func registerCoreTests() {
         context.expectEqual(snapshot?.authExpired, true)
         context.expectEqual(snapshot?.weeklyRemainingPercent, 71)
     }
+
+    test("Settings keep the threshold tier") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = SettingsFileStore(url: directory.appendingPathComponent(SettingsFileStore.fileName))
+        var settings = AppSettings.default
+        settings.thresholdTier = .conservative
+        try? store.save(settings)
+        context.expectEqual(store.load().thresholdTier, .conservative)
+    }
+
+    test("Local data cleaner removes the files of the app") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for name in [SnapshotStore.fileName, SnapshotStore.mcpFileName, SessionIndexer.cacheFileName, SettingsFileStore.fileName] {
+            try? Data("x".utf8).write(to: directory.appendingPathComponent(name))
+        }
+        let cleaner = LocalDataCleaner(directory: directory)
+        let removed = try? cleaner.clear()
+        context.expectEqual(removed, 4)
+        let left = LocalDataCleaner(directory: directory).fileURLs.filter { FileManager.default.fileExists(atPath: $0.path) }
+        context.expectEqual(left.count, 0)
+    }
+
+    test("The threshold tier reaches the verdict") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 1, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 2)
+        let builder = SnapshotBuilder(
+            quota: StubQuotaProvider(snapshot: QuotaSnapshot(
+                planType: "pro", weeklyRemainingPercent: 84, weeklyResetsAt: nil,
+                source: .official, fetchedAt: now
+            )),
+            credits: StubCreditsProvider(snapshot: ResetCreditsSnapshot(
+                availableCount: 0, reportedAvailableCount: 0, items: [], fetchedAt: now
+            )),
+            sessions: StubSessionProvider(snapshot: nil, turns: baseline + current),
+            account: StubAccountProvider(snapshot: AccountSnapshot(
+                todayTokens: 1, totalTokens: 2, source: "local", updatedAt: now
+            )),
+            radar: StubRadarProvider(snapshot: .empty)
+        )
+        let standard = await builder.build(now: now, thresholds: .standard)
+        let conservative = await builder.build(now: now, thresholds: .conservative)
+        context.expectTrue(standard.health.status != .normal)
+        context.expectTrue(conservative.health.status == .normal || conservative.health.status == .insufficient)
+    }
 }
 
 /// A source that always returns the same signals.

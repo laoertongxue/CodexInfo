@@ -1,6 +1,9 @@
 import Foundation
 
 public actor SessionIndexer {
+    /// The name of the cache file of the index.
+    public static let cacheFileName = "session-index.json"
+
     private struct FileState {
         /// Bytes consumed from the file, including the bytes held in `pending`.
         var offset: UInt64

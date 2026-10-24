@@ -9,6 +9,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var baselineWindowDays: Int
     /// The number of turns the baseline needs at least.
     public var minimumTurns: Int
+    /// The tier of the thresholds of the verdict.
+    public var thresholdTier: HealthThresholdTier
     /// Whether the system notifications are allowed.
     public var notificationsEnabled: Bool
     /// Whether the app starts when the user logs in.
@@ -19,12 +21,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public init(
         baselineWindowDays: Int = 7,
         minimumTurns: Int = 8,
+        thresholdTier: HealthThresholdTier = .standard,
         notificationsEnabled: Bool = false,
         launchAtLogin: Bool = false,
         segments: [StatusSegment] = [.quota, .rate, .health]
     ) {
         self.baselineWindowDays = baselineWindowDays
         self.minimumTurns = minimumTurns
+        self.thresholdTier = thresholdTier
         self.notificationsEnabled = notificationsEnabled
         self.launchAtLogin = launchAtLogin
         self.segments = segments
@@ -32,6 +36,18 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     /// The settings of a fresh installation.
     public static let `default` = AppSettings()
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        baselineWindowDays = try container.decode(Int.self, forKey: .baselineWindowDays)
+        minimumTurns = try container.decode(Int.self, forKey: .minimumTurns)
+        // A file of an older build does not know the tier, so it keeps the
+        // standard one instead of losing the other settings.
+        thresholdTier = try container.decodeIfPresent(HealthThresholdTier.self, forKey: .thresholdTier) ?? .standard
+        notificationsEnabled = try container.decode(Bool.self, forKey: .notificationsEnabled)
+        launchAtLogin = try container.decode(Bool.self, forKey: .launchAtLogin)
+        segments = try container.decode([StatusSegment].self, forKey: .segments)
+    }
 }
 
 /// Reads and writes the settings file.

@@ -11,6 +11,8 @@ struct SettingsView: View {
     @ObservedObject var store: SettingsStore
     /// The notifications of the app.
     let notifications: NotificationController
+    /// Removes the files the app wrote.
+    var onClearLocalData: (() -> Void)?
 
     var body: some View {
         Form {
@@ -76,6 +78,17 @@ struct SettingsView: View {
                     ),
                     in: 3...30
                 )
+                Picker("阈值档位", selection: Binding(
+                    get: { store.settings.thresholdTier },
+                    set: { value in store.update { $0.thresholdTier = value } }
+                )) {
+                    ForEach(HealthThresholdTier.allCases, id: \.self) { tier in
+                        Text(tier.label).tag(tier)
+                    }
+                }
+                Text("保守档只在速率与首 token 上更严格。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("通知") {
@@ -112,6 +125,15 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Text("设置保存在 ~/Library/Application Support/CodexInfo/settings.json")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("本地数据") {
+                Button("清除本地数据") {
+                    onClearLocalData?()
+                }
+                Text("删除索引、快照、源缓存与设置文件；面板与插件会重新计算数据。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

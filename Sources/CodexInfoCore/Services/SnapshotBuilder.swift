@@ -65,7 +65,8 @@ public actor SnapshotBuilder {
     public func build(
         now: Date = Date(),
         windowDays: Int = 7,
-        minimumTurns: Int = 8
+        minimumTurns: Int = 8,
+        thresholds: HealthThresholds = .standard
     ) async -> UsageSnapshot {
         // The areas are asked at the same time, so one slow source cannot hold
         // up the whole snapshot.
@@ -126,7 +127,8 @@ public actor SnapshotBuilder {
             routeDowngrade: sessionSnapshot.routeDowngrade,
             now: now,
             windowDays: windowDays,
-            minimumTurns: minimumTurns
+            minimumTurns: minimumTurns,
+            thresholds: thresholds
         )
 
         return UsageSnapshot(

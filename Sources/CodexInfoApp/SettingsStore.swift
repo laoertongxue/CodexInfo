@@ -33,6 +33,14 @@ final class SettingsStore: ObservableObject {
         settings = updated
     }
 
+    /// Resets the settings to the defaults.
+    ///
+    /// The button that clears the local data uses it, so the app starts over
+    /// with the settings of a fresh installation.
+    func reset() {
+        settings = .default
+    }
+
     /// Writes the settings to the file.
     private func save() {
         try? fileStore.save(settings)

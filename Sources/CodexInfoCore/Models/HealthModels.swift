@@ -119,3 +119,29 @@ public struct HealthThresholds: Equatable, Sendable {
         reasoningRatio: 0.5, toolDensityRatio: 0.6
     )
 }
+
+/// The threshold tier of the verdict.
+///
+/// The settings offer the two tiers of the design (5.3): the standard tier
+/// uses the thresholds of the spec, the conservative tier only tightens the
+/// speed and the time to the first token.
+public enum HealthThresholdTier: String, Codable, CaseIterable, Equatable, Sendable {
+    case standard
+    case conservative
+
+    /// The thresholds of the tier.
+    public var thresholds: HealthThresholds {
+        switch self {
+        case .standard: return .standard
+        case .conservative: return .conservative
+        }
+    }
+
+    /// The name of the tier in the settings.
+    public var label: String {
+        switch self {
+        case .standard: return "标准"
+        case .conservative: return "保守"
+        }
+    }
+}

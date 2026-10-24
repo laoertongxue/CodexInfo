@@ -130,7 +130,11 @@ final class MenuBarController: NSObject {
     /// Opens the settings window.
     @objc private func showSettings() {
         if settingsWindow == nil {
-            let view = SettingsView(store: environment.settings, notifications: environment.notifications)
+            let view = SettingsView(
+                store: environment.settings,
+                notifications: environment.notifications,
+                onClearLocalData: { self.environment.clearLocalData() }
+            )
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
             window.title = "CodexInfo 设置"
             window.styleMask = [.titled, .closable]
