@@ -20,15 +20,18 @@ public struct OpenAIStatusSource: ResetSource {
               let status = root["status"] as? [String: Any] else { return [] }
         let indicator = status["indicator"] as? String ?? "unknown"
         let description = status["description"] as? String ?? "Unknown"
+        let page = root["page"] as? [String: Any]
+        let pageID = page?["id"] as? String ?? "status"
+        let updatedAt = DateParsing.iso8601(page?["updated_at"] as? String)
         return [ResetSignal(
-            id: "\(id):\(indicator):\(now.timeIntervalSince1970)",
+            id: "\(id):\(pageID):\(indicator)",
             sourceId: id,
             sourceName: displayName,
             kind: .status,
-            severity: indicator == "none" ? nil : "strong",
+            severity: indicator == "none" ? nil : "degraded",
             title: "OpenAI 服务状态：\(description)",
             summary: "服务状态指示灯：\(indicator)",
-            publishedAt: now,
+            publishedAt: updatedAt ?? now,
             url: URL(string: "https://status.openai.com/"),
             verified: false,
             scope: "所有用户",

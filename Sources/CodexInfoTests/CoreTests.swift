@@ -1112,6 +1112,39 @@ func registerCoreTests() {
         context.expectEqual(signals.first?.url?.absoluteString, "https://x.com/example")
     }
 
+    test("CodexRadarCurrentSource ignores an unconfirmed announcement") { context in
+        let json = #"{"monitored_at":"2026-10-24T12:00:00+08:00","window":{"scope":"Codex 用户"},"completion_observation":{"status":"verifying","confirmation_level":"unconfirmed","occurred_on":"2026-10-24","title_zh":"Day 19 重置预告"}}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200))
+        let source = CodexRadarCurrentSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(signals.count, 0)
+    }
+
+    test("CodexRadarCurrentSource uses the occurrence day of a date-only record") { context in
+        let json = #"{"monitored_at":"2026-10-23T13:10:35+08:00","timezone":"Asia/Shanghai","window":{"scope":"Codex 用户"},"completion_observation":{"status":"completed","confirmation_level":"stationmaster_confirmed","occurred_on":"2026-10-24","title_zh":"Day 18 重置完成"}}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200))
+        let source = CodexRadarCurrentSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        let publishedAt = signals.first?.publishedAt
+        context.expectTrue(publishedAt != nil)
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        context.expectEqual(publishedAt.map { calendar.component(.year, from: $0) }, 2026)
+        context.expectEqual(publishedAt.map { calendar.component(.month, from: $0) }, 10)
+        context.expectEqual(publishedAt.map { calendar.component(.day, from: $0) }, 24)
+    }
+
+    test("CodexRadarCurrentSource requests the public summary without credentials") { context in
+        let json = #"{"completion_observation":{"status":"completed","confirmation_level":"confirmed","occurred_on":"2026-10-24"}}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200))
+        let source = CodexRadarCurrentSource()
+        _ = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(http.lastRequest?.httpMethod, "GET")
+        context.expectEqual(http.lastRequest?.timeoutInterval, 10)
+        context.expectEqual(http.lastRequest?.value(forHTTPHeaderField: "User-Agent"), AppConstants.userAgent)
+        context.expectEqual(http.lastRequest?.value(forHTTPHeaderField: "Authorization"), nil)
+    }
+
     test("OpenAIStatusSource reports service status without claiming a reset") { context in
         let json = #"{"status":{"indicator":"none","description":"All Systems Operational"}}"#
         let http = MockHTTPClient(response: HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200))
@@ -1120,6 +1153,17 @@ func registerCoreTests() {
         context.expectEqual(signals.count, 1)
         context.expectEqual(signals.first?.kind, .status)
         context.expectEqual(signals.first?.verified, false)
+    }
+
+    test("OpenAIStatusSource keeps a stable id and never marks a strong signal") { context in
+        let json = #"{"page":{"id":"page-1","updated_at":"2026-10-24T12:00:00Z"},"status":{"indicator":"major","description":"Partial Outage"}}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200))
+        let source = OpenAIStatusSource()
+        let first = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        let second = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_100_000))
+        context.expectEqual(first.first?.id, second.first?.id)
+        context.expectEqual(first.first?.severity, "degraded")
+        context.expectEqual(first.first?.kind, .status)
     }
 }
 
