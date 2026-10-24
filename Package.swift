@@ -7,6 +7,8 @@ let package = Package(
     products: [
         .library(name: "CodexInfoCore", targets: ["CodexInfoCore"]),
         .library(name: "CodexInfoMCPKit", targets: ["CodexInfoMCPKit"]),
+        .library(name: "CodexInfoLive", targets: ["CodexInfoLive"]),
+        .executable(name: "codexinfo-mcp", targets: ["CodexInfoMCP"]),
         .executable(name: "codexinfo-tests", targets: ["CodexInfoTests"])
     ],
     targets: [
@@ -16,9 +18,19 @@ let package = Package(
             dependencies: ["CodexInfoCore"],
             path: "Sources/CodexInfoMCPKit"
         ),
+        .target(
+            name: "CodexInfoLive",
+            dependencies: ["CodexInfoCore", "CodexInfoMCPKit"],
+            path: "Sources/CodexInfoLive"
+        ),
+        .executableTarget(
+            name: "CodexInfoMCP",
+            dependencies: ["CodexInfoCore", "CodexInfoLive", "CodexInfoMCPKit"],
+            path: "Sources/CodexInfoMCP"
+        ),
         .executableTarget(
             name: "CodexInfoTests",
-            dependencies: ["CodexInfoCore", "CodexInfoMCPKit"],
+            dependencies: ["CodexInfoCore", "CodexInfoMCPKit", "CodexInfoLive"],
             path: "Sources/CodexInfoTests"
         )
     ],

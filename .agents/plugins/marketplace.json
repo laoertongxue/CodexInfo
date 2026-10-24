@@ -1,0 +1,12 @@
+{
+  "name": "codexinfo",
+  "interface": { "displayName": "CodexInfo" },
+  "plugins": [
+    {
+      "name": "codexinfo",
+      "source": { "source": "local", "path": "./plugins/codexinfo" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Developer Tools"
+    }
+  ]
+}

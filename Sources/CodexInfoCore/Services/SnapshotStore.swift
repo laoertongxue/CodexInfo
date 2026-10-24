@@ -8,6 +8,11 @@ import Foundation
 public struct SnapshotStore: Sendable {
     /// The name of the snapshot file.
     public static let fileName = "snapshot.json"
+    /// The name of the snapshot file of the MCP server.
+    ///
+    /// The server writes its own file, so it never overwrites the snapshot of
+    /// the menu bar app.
+    public static let mcpFileName = "mcp-snapshot.json"
 
     /// The directory the app writes its files to.
     public static var defaultDirectory: URL {
@@ -21,11 +26,13 @@ public struct SnapshotStore: Sendable {
 
     /// Creates the store for the given directory.
     ///
-    /// - Parameter directory: the directory the snapshot file lives in; the
-    ///   app uses the support directory, the tests use a temporary one.
-    public init(directory: URL = SnapshotStore.defaultDirectory) {
+    /// - Parameters:
+    ///   - directory: the directory the snapshot file lives in; the
+    ///     app uses the support directory, the tests use a temporary one.
+    ///   - fileName: the name of the snapshot file.
+    public init(directory: URL = SnapshotStore.defaultDirectory, fileName: String = SnapshotStore.fileName) {
         self.directory = directory
-        self.url = directory.appendingPathComponent(SnapshotStore.fileName)
+        self.url = directory.appendingPathComponent(fileName)
     }
 
     /// The URL of the snapshot file.

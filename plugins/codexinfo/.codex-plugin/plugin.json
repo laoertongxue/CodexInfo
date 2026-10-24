@@ -1,0 +1,15 @@
+{
+  "name": "codexinfo",
+  "version": "0.1.0",
+  "description": "Codex usage, reset cards, reset radar, output speed and local model health.",
+  "author": { "name": "laoer" },
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "CodexInfo",
+    "shortDescription": "Quota, reset cards, tok/s and local model health",
+    "category": "Developer Tools",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/icon.svg"
+  }
+}

@@ -24,6 +24,7 @@ public actor SessionIndexer {
     private let cacheURL: URL?
     private var states: [String: FileState] = [:]
     private var cachedIndexes: [String: CachedIndex] = [:]
+    private var scanCount = 0
 
     public init(rootURL: URL, cacheURL: URL? = nil) {
         self.rootURL = rootURL
@@ -33,6 +34,12 @@ public actor SessionIndexer {
             self.cachedIndexes = decoded
         }
     }
+
+    /// The number of scans the indexer has performed.
+    ///
+    /// The counter shows whether the areas of a build shared one scan of the
+    /// session log.
+    public var scans: Int { scanCount }
 
     public func scan() async -> [SessionIndex] {
         performScan().indexes
@@ -49,6 +56,7 @@ public actor SessionIndexer {
     }
 
     private func performScan() -> (indexes: [SessionIndex], threadTotals: [String: Int]) {
+        scanCount += 1
         let files = (try? FileManager.default.subpathsOfDirectory(atPath: rootURL.path))?
             .filter { $0.hasSuffix(".jsonl") } ?? []
         var results: [SessionIndex] = []

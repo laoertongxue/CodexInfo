@@ -78,3 +78,28 @@ final class TestRegistry {
 func test(_ name: String, _ body: @escaping (TestContext) async throws -> Void) {
     TestRegistry.shared.add(name, body: body)
 }
+
+/// Keeps the result of a finished operation.
+actor TimeoutBox<Value: Sendable> {
+    private var value: Value?
+
+    func store(_ newValue: Value) { value = newValue }
+    func load() -> Value? { value }
+}
+
+/// Runs the operation and gives up after the given time.
+///
+/// The operation is not stopped when the time is up: a provider that waits for
+/// another one holds a continuation that no cancellation releases, so the run
+/// moves on and the process ends it at the end.
+func withTimeout<Value: Sendable>(
+    seconds: TimeInterval,
+    _ operation: @escaping @Sendable () async -> Value
+) async -> Value? {
+    let box = TimeoutBox<Value>()
+    let task = Task { await box.store(await operation()) }
+    try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+    let value = await box.load()
+    task.cancel()
+    return value
+}

@@ -1737,6 +1737,40 @@ func registerCoreTests() {
         context.expectEqual(strict.health.status, .insufficient)
     }
 
+    test("SnapshotBuilder asks the providers at the same time") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let gate = BuildGate()
+        let builder = SnapshotBuilder(
+            quota: GatedQuotaProvider(gate: gate),
+            credits: StubCreditsProvider(snapshot: nil),
+            sessions: StubSessionProvider(snapshot: nil, turns: []),
+            account: OpeningAccountProvider(gate: gate),
+            radar: StubRadarProvider(snapshot: .empty)
+        )
+        // The quota only answers once the account provider has answered, so the
+        // build can only finish when the areas are asked at the same time.
+        let snapshot = await withTimeout(seconds: 5) { await builder.build(now: now) }
+        context.expectTrue(snapshot != nil, "the build waited for the providers one after the other")
+    }
+
+    test("SessionRepository reuses the scan it just did") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("session.jsonl")
+        let content = "{\"timestamp\":\"2026-10-24T02:48:19.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-1\",\"started_at\":1792810096}}\n"
+            + "{\"timestamp\":\"2026-10-24T02:48:20.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_usage_record\",\"turn_id\":\"turn-1\",\"response_id\":\"resp-1\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":20,\"reasoning_output_tokens\":0,\"total_tokens\":120},\"turn_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":20,\"reasoning_output_tokens\":0,\"total_tokens\":120},\"thread_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":80,\"cache_write_input_tokens\":0,\"output_tokens\":20,\"reasoning_output_tokens\":0,\"total_tokens\":120}}}\n"
+        try content.write(to: file, atomically: true, encoding: .utf8)
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let repository = SessionRepository(indexer: indexer)
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        _ = await repository.currentSnapshot(now: now)
+        let turns = await repository.allTurns(now: now)
+        context.expectEqual(turns.count, 1, "the turns of the session are there")
+        context.expectEqual(await indexer.scans, 1, "the session log was scanned once")
+    }
+
     test("SnapshotStore round-trips atomically") { context in
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -2130,6 +2164,50 @@ struct StubAccountProvider: AccountSnapshotProviding {
 struct StubRadarProvider: ResetRadarProviding {
     let snapshot: ResetRadarSnapshot
     func radarSnapshot(now: Date) async -> ResetRadarSnapshot { snapshot }
+}
+
+/// A gate that one provider opens and another one waits for.
+///
+/// It proves that two providers are asked at the same time: the waiting one
+/// only answers after the opening one has been called.
+actor BuildGate {
+    private var isOpen = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    /// Opens the gate and releases the waiting provider.
+    func open() {
+        isOpen = true
+        waiter?.resume()
+        waiter = nil
+    }
+
+    /// Waits until the gate is opened.
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiter = continuation
+        }
+    }
+}
+
+/// A quota provider that only answers after the gate was opened.
+struct GatedQuotaProvider: QuotaSnapshotProviding {
+    let gate: BuildGate
+
+    func quotaSnapshot(now: Date) async -> QuotaSnapshot? {
+        await gate.wait()
+        return nil
+    }
+}
+
+/// An account provider that opens the gate.
+struct OpeningAccountProvider: AccountSnapshotProviding {
+    let gate: BuildGate
+
+    func accountSnapshot(now: Date) async -> AccountSnapshot? {
+        await gate.open()
+        return nil
+    }
 }
 
 /// A Gregorian calendar pinned to the given time zone.

@@ -67,12 +67,36 @@ public actor SnapshotBuilder {
         windowDays: Int = 7,
         minimumTurns: Int = 8
     ) async -> UsageSnapshot {
-        let quotaProvided = await quota.quotaSnapshot(now: now)
-        let creditsProvided = await credits.creditsSnapshot(now: now)
-        let sessionProvided = await sessions.currentSnapshot(now: now)
-        let turns = await sessions.allTurns(now: now)
-        let accountProvided = await account.accountSnapshot(now: now)
-        let radarSnapshot = await radar.radarSnapshot(now: now)
+        // The areas are asked at the same time, so one slow source cannot hold
+        // up the whole snapshot.
+        let quota = self.quota
+        let credits = self.credits
+        let sessions = self.sessions
+        let account = self.account
+        let radar = self.radar
+
+        async let quotaTask = quota.quotaSnapshot(now: now)
+        async let creditsTask = credits.creditsSnapshot(now: now)
+        async let sessionTask = sessions.currentSnapshot(now: now)
+        async let turnsTask = sessions.allTurns(now: now)
+        async let accountTask = account.accountSnapshot(now: now)
+        async let radarTask = radar.radarSnapshot(now: now)
+
+        let (
+            quotaProvided,
+            creditsProvided,
+            sessionProvided,
+            turns,
+            accountProvided,
+            radarSnapshot
+        ) = await (
+            quotaTask,
+            creditsTask,
+            sessionTask,
+            turnsTask,
+            accountTask,
+            radarTask
+        )
 
         // An area without data keeps an empty placeholder. The placeholder
         // carries the moment of the build, so it is never shown as a value
