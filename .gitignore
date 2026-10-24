@@ -1,0 +1,23 @@
+# Local design companion and screenshots
+.superpowers/
+
+# Swift build artifacts
+.build/
+.swiftpm/
+DerivedData/
+dist/
+
+# Web build artifacts
+node_modules/
+Web/dist/
+
+# Generated plugin runtime files
+plugins/codexinfo/bin/
+plugins/codexinfo/.mcp.json
+
+# Local-only data and fixtures
+*.local.json
+Tests/Fixtures/private/
+
+# macOS
+.DS_Store
