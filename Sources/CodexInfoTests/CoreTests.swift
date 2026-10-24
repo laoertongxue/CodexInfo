@@ -1167,7 +1167,7 @@ func registerCoreTests() {
         let first = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
         let second = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_100_000))
         context.expectEqual(first.first?.id, second.first?.id)
-        context.expectEqual(first.first?.severity, "degraded")
+        context.expectEqual(first.first?.severity, "incident")
         context.expectEqual(first.first?.kind, .status)
     }
 
