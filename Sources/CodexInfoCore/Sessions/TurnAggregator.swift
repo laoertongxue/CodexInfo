@@ -113,6 +113,10 @@ public enum TurnAggregator {
                 builders[value.turnId] = valueBuilder
             case .tokenCount(let value):
                 lastTokenCount = value
+            case .turnAborted:
+                // An aborted turn never completes, so it carries no metrics and
+                // stays outside the baseline. It must not create a turn either.
+                break
             case .compacted:
                 compactions += 1
             }

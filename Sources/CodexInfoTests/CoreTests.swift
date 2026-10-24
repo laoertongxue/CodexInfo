@@ -174,6 +174,20 @@ func registerCoreTests() {
         context.expectEqual(complete.ttftMs, 3991)
     }
 
+    test("SessionLogParser reads an aborted turn") { context in
+        // The real Codex log writes this event when a turn is cancelled.
+        let line = #"{"timestamp":"2026-10-24T02:49:11.000Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-2","duration_ms":4321,"started_at":1792810100,"completed_at":1792810111,"reason":"interrupted"}}"#
+        guard case .turnAborted(let aborted)? = SessionLogParser.parse(line: Data(line.utf8)) else {
+            context.fail("expected turnAborted")
+            return
+        }
+        context.expectEqual(aborted.turnId, "turn-2")
+        context.expectEqual(aborted.durationMs, 4321)
+        context.expectEqual(aborted.reason, "interrupted")
+        context.expectEqual(aborted.startedAt, Date(timeIntervalSince1970: 1_792_810_100))
+        context.expectEqual(aborted.completedAt, Date(timeIntervalSince1970: 1_792_810_111))
+    }
+
     test("SessionLogParser reads item durations and thread settings") { context in
         let itemLine = #"{"timestamp":"2026-10-24T02:48:23.000Z","type":"event_msg","payload":{"type":"item_completed","turn_id":"turn-1","item":{"type":"Reasoning"},"started_at_ms":1000,"completed_at_ms":3000}}"#
         guard case .itemCompleted(let item)? = SessionLogParser.parse(line: Data(itemLine.utf8)) else {
@@ -553,6 +567,31 @@ func registerCoreTests() {
         context.expectEqual(snapshot?.label, "当前会话")
         context.expectEqual(snapshot?.contextTokens, 120)
         context.expectEqual(snapshot?.totalTokens, 120)
+    }
+
+    test("SessionIndexer clears the active turn after an aborted turn") { context in
+        // An aborted turn never reaches `task_complete`. The session must not
+        // stay pinned to "生成中" forever.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let session = directory.appendingPathComponent("aborted.jsonl")
+        let content = #"{"timestamp":"2026-10-24T02:48:19.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","started_at":1792810096}}"# + "\n"
+            + #"{"timestamp":"2026-10-24T02:48:25.000Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-1","duration_ms":6000,"started_at":1792810096,"completed_at":1792810102,"reason":"interrupted"}}"# + "\n"
+        try content.write(to: session, atomically: true, encoding: .utf8)
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let indexes = await indexer.scan()
+        context.expectEqual(indexes.count, 1)
+        context.expectEqual(indexes.first?.isActive, false, "the aborted turn leaves no active turn")
+        context.expectEqual(indexes.first?.turns.count, 1)
+        context.expectEqual(indexes.first?.turns.first?.isCompleted, false, "the aborted turn never completed")
+
+        let repository = SessionRepository(indexer: indexer)
+        let snapshot = await repository.currentSnapshot(now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(snapshot?.isActive, false, "the panel would show 生成中 otherwise")
+        context.expectEqual(snapshot?.label, "最近会话")
     }
 
     test("SessionIndex and SessionSnapshot are constructible from the test module") { context in

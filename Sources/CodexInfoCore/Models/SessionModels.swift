@@ -104,6 +104,32 @@ public struct TurnContextEvent: Equatable, Sendable {
     }
 }
 
+/// An interrupted turn.
+///
+/// The real Codex log writes an abort event when a turn is cancelled. The turn
+/// never reaches `task_complete`, so it stays outside the baseline.
+public struct TurnAbortedEvent: Equatable, Sendable {
+    public let turnId: String
+    public let durationMs: Double?
+    public let startedAt: Date?
+    public let completedAt: Date?
+    public let reason: String?
+
+    public init(
+        turnId: String,
+        durationMs: Double?,
+        startedAt: Date?,
+        completedAt: Date?,
+        reason: String?
+    ) {
+        self.turnId = turnId
+        self.durationMs = durationMs
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.reason = reason
+    }
+}
+
 public struct ThreadSettingsEvent: Equatable, Sendable {
     public let model: String?
     public let reasoningEffort: String?
@@ -126,6 +152,7 @@ public enum SessionEvent: Equatable, Sendable {
     case itemCompleted(ItemCompletedEvent)
     case turnContext(TurnContextEvent)
     case threadSettings(ThreadSettingsEvent)
+    case turnAborted(TurnAbortedEvent)
     case compacted
 }
 

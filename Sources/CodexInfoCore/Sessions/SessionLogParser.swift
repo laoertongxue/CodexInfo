@@ -85,6 +85,18 @@ public enum SessionLogParser {
                 startedAtMs: double(payload["started_at_ms"]),
                 completedAtMs: double(payload["completed_at_ms"])
             ))
+        case "turn_aborted":
+            // The real log writes this event when a turn is cancelled. The turn
+            // never reaches `task_complete`, so it stays outside the baseline,
+            // but the session is not active any more either.
+            guard let turnId = nonEmptyString(payload["turn_id"] as? String) else { return nil }
+            return .turnAborted(TurnAbortedEvent(
+                turnId: turnId,
+                durationMs: double(payload["duration_ms"]),
+                startedAt: DateParsing.epochSeconds(payload["started_at"]),
+                completedAt: DateParsing.epochSeconds(payload["completed_at"]),
+                reason: nonEmptyString(payload["reason"] as? String)
+            ))
         case "thread_settings_applied":
             guard let settings = payload["thread_settings"] as? [String: Any] else { return nil }
             let model = nonEmptyString(settings["model"] as? String)

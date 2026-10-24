@@ -126,6 +126,7 @@ public actor SessionIndexer {
                 switch event {
                 case .taskStarted(let value): activeTurn = value.turnId
                 case .taskComplete(let value): if activeTurn == value.turnId { activeTurn = nil }
+                case .turnAborted(let value): if activeTurn == value.turnId { activeTurn = nil }
                 default: break
                 }
             }
