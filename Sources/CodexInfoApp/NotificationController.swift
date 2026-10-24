@@ -51,15 +51,22 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
     ///   - now: the moment the expiry of the credits is measured from.
     func evaluate(snapshot: UsageSnapshot, settings: AppSettings, now: Date = Date()) {
         let sent = Set(defaults.stringArray(forKey: Self.sentKey) ?? [])
-        let events = NotificationEventEvaluator.newEvents(snapshot: snapshot, now: now, sentKeys: sent)
-        guard settings.notificationsEnabled, !events.isEmpty else { return }
-        for event in events {
+        let plan = NotificationEventEvaluator.plan(
+            snapshot: snapshot,
+            notificationsEnabled: settings.notificationsEnabled,
+            now: now,
+            sentKeys: sent
+        )
+        // The keys are remembered even when the notifications are off, so that
+        // enabling them later does not raise a burst of old events.
+        defaults.set(plan.nextSentKeys.sorted(), forKey: Self.sentKey)
+        guard !plan.events.isEmpty else { return }
+        for event in plan.events {
             let content = UNMutableNotificationContent()
             content.title = event.title
             content.body = event.body
             center?.add(UNNotificationRequest(identifier: event.key, content: content, trigger: nil))
         }
-        defaults.set(sent.union(events.map(\.key)).sorted(), forKey: Self.sentKey)
     }
 
     nonisolated func userNotificationCenter(

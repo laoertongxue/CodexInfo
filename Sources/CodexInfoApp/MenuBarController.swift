@@ -29,6 +29,7 @@ final class MenuBarController: NSObject {
         popover.animates = true
 
         environment.onSnapshot = { [weak self] snapshot in self?.update(snapshot) }
+        environment.onError = { [weak self] message in self?.panel.render(error: message) }
         // A change of the parts of the title is shown at once.
         environment.settings.$settings
             .dropFirst()

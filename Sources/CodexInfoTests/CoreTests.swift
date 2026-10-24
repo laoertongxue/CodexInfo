@@ -1897,6 +1897,44 @@ func registerCoreTests() {
         context.expectEqual(title.parts.first?.color, .danger)
         context.expectEqual(title.text, "7%")
     }
+
+    test("Notification plan remembers the events while the notifications are off") { context in
+        let moment = Date(timeIntervalSince1970: 1_790_000_000)
+        let confirmed = ResetSignal(
+            id: "reset:1", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            kind: .reset, severity: "strong", title: "第 13 天额度重置完成", summary: "",
+            publishedAt: moment, url: nil, verified: true, scope: "所有付费用户",
+            confirmingSources: ["AI 哨兵记录", "AI 哨兵信号"], rawHash: nil
+        )
+        let radar = ResetRadarSnapshot(
+            sources: [], latestConfirmed: confirmed, recent: [confirmed],
+            lastScanAt: moment, nextScanAt: moment
+        )
+        let snapshot = UsageSnapshot(
+            generatedAt: moment,
+            freshness: Freshness(quota: .fresh, session: .fresh, account: .fresh, sources: .fresh),
+            quota: QuotaSnapshot(
+                planType: "pro", weeklyRemainingPercent: 84, weeklyResetsAt: nil,
+                source: .official, fetchedAt: moment
+            ),
+            resetCredits: ResetCreditsSnapshot(
+                availableCount: 0, reportedAvailableCount: 0, items: [], fetchedAt: moment
+            ),
+            session: .empty,
+            account: AccountSnapshot(todayTokens: 1, totalTokens: 2, source: "local", updatedAt: moment),
+            health: .empty,
+            resetRadar: radar
+        )
+        let muted = NotificationEventEvaluator.plan(
+            snapshot: snapshot, notificationsEnabled: false, now: moment, sentKeys: []
+        )
+        context.expectEqual(muted.events.count, 0)
+        context.expectTrue(muted.nextSentKeys.isEmpty == false)
+        let enabled = NotificationEventEvaluator.plan(
+            snapshot: snapshot, notificationsEnabled: true, now: moment, sentKeys: muted.nextSentKeys
+        )
+        context.expectEqual(enabled.events.count, 0)
+    }
 }
 
 /// A source that always returns the same signals.

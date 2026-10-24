@@ -114,6 +114,41 @@ public enum NotificationEventEvaluator {
         events(snapshot: snapshot, now: now).filter { !sentKeys.contains($0.key) }
     }
 
+    /// What the app should do with the events of a snapshot.
+    ///
+    /// The keys of the events are remembered even when the notifications are
+    /// off, so that turning them on later does not raise a burst of old
+    /// events.
+    public struct NotificationPlan: Equatable, Sendable {
+        public let events: [NotificationEvent]
+        public let nextSentKeys: Set<String>
+
+        public init(events: [NotificationEvent], nextSentKeys: Set<String>) {
+            self.events = events
+            self.nextSentKeys = nextSentKeys
+        }
+    }
+
+    /// The plan of one snapshot.
+    ///
+    /// - Parameters:
+    ///   - snapshot: the snapshot the events are read from.
+    ///   - notificationsEnabled: whether the events may be shown.
+    ///   - now: the moment the expiry of the credits is measured from.
+    ///   - sentKeys: the keys of the events that were already seen.
+    public static func plan(
+        snapshot: UsageSnapshot,
+        notificationsEnabled: Bool,
+        now: Date = Date(),
+        sentKeys: Set<String>
+    ) -> NotificationPlan {
+        let fresh = events(snapshot: snapshot, now: now).filter { !sentKeys.contains($0.key) }
+        return NotificationPlan(
+            events: notificationsEnabled ? fresh : [],
+            nextSentKeys: sentKeys.union(fresh.map(\.key))
+        )
+    }
+
     /// The key of the quota cycle.
     ///
     /// The cycle of the quota is the moment the weekly window resets. Without

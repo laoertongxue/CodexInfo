@@ -12,6 +12,10 @@ final class AppEnvironment: ObservableObject {
     /// The snapshot the panel shows.
     @Published private(set) var snapshot: UsageSnapshot?
     /// The last error of the refresh.
+    ///
+    /// The panel shows it through the bridge, so a broken write is visible
+    /// instead of silent.
+    var onError: ((String) -> Void)?
     @Published private(set) var error: String?
     /// The settings of the app.
     let settings: SettingsStore
@@ -71,6 +75,7 @@ final class AppEnvironment: ObservableObject {
         } catch {
             // The panel still shows the snapshot; only the file is missing.
             self.error = "快照写入失败：\(error.localizedDescription)"
+            onError?(self.error ?? "")
         }
         onSnapshot?(value)
         notifications.evaluate(snapshot: value, settings: current)
