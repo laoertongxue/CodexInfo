@@ -2,6 +2,101 @@ import Foundation
 import CodexInfoCore
 
 func registerCoreTests() {
+    test("NetworkAllowList only allows the hosts of the sources") { context in
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "https://chatgpt.com/backend-api/wham/usage")!),
+            true, "the official endpoint is allowed"
+        )
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "https://codexradar.com/feed.xml")!),
+            true, "the radar is allowed"
+        )
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "https://codex-reset.com/api/feed")!),
+            true, "the reset source is allowed"
+        )
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "https://status.openai.com/api/v2/summary.json")!),
+            true, "the status source is allowed"
+        )
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "http://chatgpt.com/backend-api/wham/usage")!),
+            false, "only HTTPS is allowed"
+        )
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "https://evil.example.com/usage")!),
+            false, "another host is not allowed"
+        )
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "https://notcodexradar.com/feed.xml")!),
+            false, "a host that only looks like an allowed one is not allowed"
+        )
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "https://localhost:8080/usage")!),
+            false, "the loopback is not allowed"
+        )
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "https://127.0.0.1/usage")!),
+            false, "a loopback address is not allowed"
+        )
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "https://192.168.1.10/usage")!),
+            false, "a private address is not allowed"
+        )
+        context.expectEqual(
+            NetworkAllowList.allows(URL(string: "https://169.254.1.10/usage")!),
+            false, "a link-local address is not allowed"
+        )
+    }
+
+    test("The HTTP client blocks a host outside the allow-list") { context in
+        let client = URLSessionHTTPClient()
+        do {
+            _ = try await client.send(URLRequest(url: URL(string: "https://evil.example.com/usage")!))
+            context.fail("the request left the process")
+        } catch let error as HTTPError {
+            context.expectEqual(error, .blockedURL)
+        } catch {
+            context.fail("the request left the process: \(error)")
+        }
+    }
+
+    test("The redirect delegate rejects a host outside the allow-list") { context in
+        let delegate = AllowListRedirectDelegate()
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let task = session.dataTask(with: URL(string: "https://chatgpt.com/backend-api/wham/usage")!)
+        let response = HTTPURLResponse(
+            url: URL(string: "https://chatgpt.com/backend-api/wham/usage")!,
+            statusCode: 302,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Location": "https://evil.example.com/usage"]
+        )!
+
+        var blocked: URLRequest?
+        delegate.urlSession(
+            session,
+            task: task,
+            willPerformHTTPRedirection: response,
+            newRequest: URLRequest(url: URL(string: "https://evil.example.com/usage")!)
+        ) { request in
+            blocked = request
+        }
+        context.expectEqual(blocked == nil, true, "the redirect was rejected")
+
+        var allowed: URLRequest?
+        delegate.urlSession(
+            session,
+            task: task,
+            willPerformHTTPRedirection: response,
+            newRequest: URLRequest(url: URL(string: "https://chatgpt.com/backend-api/wham/usage-2")!)
+        ) { request in
+            allowed = request
+        }
+        context.expectEqual(allowed?.url?.absoluteString, "https://chatgpt.com/backend-api/wham/usage-2")
+        task.cancel()
+    }
+
     test("CredentialStore parses top-level access token") { context in
         let data = #"{"access_token":"tok_test"}"#.data(using: .utf8)!
         let credentials = try FileCredentialStore.parse(data)

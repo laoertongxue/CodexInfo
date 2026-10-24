@@ -403,6 +403,7 @@ public actor ResetRadarService {
         case .invalidResponse: return "invalid response"
         case .status(let code): return "HTTP status \(code)"
         case .emptyResponse: return "empty response"
+        case .blockedURL: return "host outside the allow-list"
         }
     }
 
