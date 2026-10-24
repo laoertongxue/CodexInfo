@@ -954,6 +954,132 @@ func registerCoreTests() {
         )
         context.expectEqual(result.status, .insufficient)
     }
+
+    test("DegradationAnalyzer escalates a route anomaly with one performance hit to suspected") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = [makeTurn(id: "route-1", completedAt: now, modelItemMs: 8_000)]
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: true,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .suspected)
+        context.expectEqual(result.signals.first { $0.id == .route }?.flagged, true)
+    }
+
+    test("DegradationAnalyzer reports insufficient when no turn finished in the last 24 hours") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = [makeTurn(id: "stale-1", completedAt: now.addingTimeInterval(-3 * 86_400))]
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .insufficient)
+        context.expectTrue(result.disclaimer.contains("24 小时内没有已完成轮次"))
+    }
+
+    test("DegradationAnalyzer needs a signal to persist over the last three turns for degraded") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = [
+            makeTurn(id: "p-1", completedAt: now.addingTimeInterval(-120)),
+            makeTurn(id: "p-2", completedAt: now.addingTimeInterval(-60)),
+            makeTurn(id: "p-3", completedAt: now, ttftMs: 3_000, reasoningOutputTokens: 4, modelItemMs: 8_000),
+        ]
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .suspected)
+    }
+
+    test("DegradationAnalyzer caps the verdict at suspected when fewer than three recent turns exist") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = [
+            makeTurn(id: "s-1", completedAt: now.addingTimeInterval(-60), ttftMs: 3_000, reasoningOutputTokens: 4, modelItemMs: 8_000),
+            makeTurn(id: "s-2", completedAt: now, ttftMs: 3_000, reasoningOutputTokens: 4, modelItemMs: 8_000),
+        ]
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .suspected)
+    }
+
+    test("DegradationAnalyzer excludes turns without duration or usage from the baseline") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        var baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        baseline.append(makeTurn(id: "no-duration", completedAt: now, durationMs: 0, modelItemMs: 400))
+        baseline.append(makeTurn(id: "no-usage", completedAt: now, inputTokens: 0, outputTokens: 0))
+        let current = [makeTurn(id: "ok-1", completedAt: now)]
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.sampleTurns, 8)
+        context.expectEqual(result.status, .normal)
+    }
+
+    test("DegradationAnalyzer keeps another provider out of the baseline") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        var baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        baseline += (0..<8).map { index in
+            makeTurn(id: "other-\(index)", provider: "other-provider", completedAt: now.addingTimeInterval(-Double(index) * 60))
+        }
+        let current = [makeTurn(id: "ok-1", completedAt: now)]
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.sampleTurns, 8)
+    }
+
+    test("DegradationAnalyzer reports insufficient when the current turn has no model") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = [makeTurn(id: "unknown-1", model: nil, completedAt: now)]
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .insufficient)
+        context.expectTrue(result.disclaimer.contains("缺少模型或档位信息"))
+    }
+
+    test("DegradationAnalyzer conservative thresholds accept a slower turn that standard flags") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = [makeTurn(id: "slow-1", completedAt: now, ttftMs: 2_525)]
+        let standard = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        let conservative = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .conservative
+        )
+        context.expectEqual(standard.signals.first { $0.id == .ttft }?.flagged, true)
+        context.expectEqual(conservative.signals.first { $0.id == .ttft }?.flagged, false)
+    }
+
+    test("DegradationAnalyzer states the baseline disclaimer on every path") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let normal = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: [makeTurn(id: "d-1", completedAt: now)],
+            routeMismatch: false, now: now, windowDays: 7, thresholds: .standard
+        )
+        let insufficient = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: [], routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        for snapshot in [normal, insufficient] {
+            context.expectTrue(snapshot.disclaimer.contains("基于本机近 7 天基线"))
+            context.expectTrue(snapshot.disclaimer.contains("不代表官方结论"))
+        }
+    }
 }
 
 /// Builds synthetic completed turns whose degradation severity grows with `severity`.
@@ -987,6 +1113,45 @@ func makeTurns(count: Int, model: String, effort: String, now: Date, severity: I
             isCompleted: true
         )
     }
+}
+
+/// Builds one synthetic completed turn with explicit field values.
+func makeTurn(
+    id: String,
+    model: String? = "gpt-6.1-sol",
+    effort: String? = "xhigh",
+    serviceTier: String? = "default",
+    provider: String? = "openai",
+    completedAt: Date,
+    durationMs: Double = 10_000,
+    ttftMs: Double = 1_000,
+    inputTokens: Int = 1_000,
+    outputTokens: Int = 100,
+    reasoningOutputTokens: Int = 20,
+    modelItemMs: Double = 4_000,
+    toolMs: Double = 1_000,
+    toolCallCount: Int = 2
+) -> TurnMetrics {
+    TurnMetrics(
+        turnId: id,
+        model: model,
+        reasoningEffort: effort,
+        serviceTier: serviceTier,
+        provider: provider,
+        compHash: "3000",
+        startedAt: completedAt.addingTimeInterval(-Double(durationMs) / 1_000),
+        completedAt: completedAt,
+        durationMs: durationMs,
+        ttftMs: ttftMs,
+        inputTokens: inputTokens,
+        cachedInputTokens: 0,
+        outputTokens: outputTokens,
+        reasoningOutputTokens: reasoningOutputTokens,
+        modelItemMs: modelItemMs,
+        toolMs: toolMs,
+        toolCallCount: toolCallCount,
+        isCompleted: true
+    )
 }
 
 /// Appends session events to a file while the indexer reads it.
