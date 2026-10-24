@@ -906,6 +906,87 @@ func registerCoreTests() {
             context.expectEqual(scanned.first?.turns.first?.toolCallCount, expectedToolCalls)
         }
     }
+
+    test("DegradationAnalyzer returns normal for a single weak signal") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 1, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline,
+            currentTurns: current,
+            routeMismatch: false,
+            now: now,
+            windowDays: 7,
+            thresholds: .standard
+        )
+        context.expectEqual(result.status, .normal)
+    }
+
+    test("DegradationAnalyzer returns suspected for two performance signals") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 1, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 2)
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .suspected)
+    }
+
+    test("DegradationAnalyzer returns degraded for three performance signals") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 3, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 3)
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .degraded)
+    }
+
+    test("DegradationAnalyzer reports insufficient baseline") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 3, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 1, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .insufficient)
+    }
+}
+
+/// Builds synthetic completed turns whose degradation severity grows with `severity`.
+///
+/// - severity 1: half the output rate
+/// - severity 2: triple the time to first token
+/// - severity 3: a fifth of the reasoning share
+func makeTurns(count: Int, model: String, effort: String, now: Date, severity: Int) -> [TurnMetrics] {
+    (0..<count).map { index in
+        let rateFactor = severity >= 1 ? 0.5 : 1.0
+        let ttftFactor = severity >= 2 ? 3.0 : 1.0
+        let reasoningFactor = severity >= 3 ? 0.2 : 1.0
+        return TurnMetrics(
+            turnId: "\(model)-\(effort)-\(index)",
+            model: model,
+            reasoningEffort: effort,
+            serviceTier: "default",
+            provider: "openai",
+            compHash: "3000",
+            startedAt: now.addingTimeInterval(-Double(index + 1) * 60),
+            completedAt: now.addingTimeInterval(-Double(index) * 60),
+            durationMs: 10_000,
+            ttftMs: (1_000 + Double(index % 3) * 10) * ttftFactor,
+            inputTokens: 1_000,
+            cachedInputTokens: 500,
+            outputTokens: 100,
+            reasoningOutputTokens: Int(20 * reasoningFactor),
+            modelItemMs: (4_000 + Double(index % 3) * 100) / rateFactor,
+            toolMs: 1_000,
+            toolCallCount: 2,
+            isCompleted: true
+        )
+    }
 }
 
 /// Appends session events to a file while the indexer reads it.
