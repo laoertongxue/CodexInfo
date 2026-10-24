@@ -1868,6 +1868,35 @@ func registerCoreTests() {
         let scans = await indexer.scans
         context.expectEqual(scans, 1)
     }
+
+    test("StatusTitleFormatter renders quota, rate and health") { context in
+        let snapshot = MCPTestFixtures.snapshot
+        let title = StatusTitleFormatter.format(snapshot, segments: [.quota, .rate, .health])
+        context.expectEqual(title.text, "84% · — · 数据不足")
+    }
+
+    test("StatusTitleFormatter marks low quota") { context in
+        let snapshot = MCPTestFixtures.snapshot
+        let lowQuota = UsageSnapshot(
+            generatedAt: snapshot.generatedAt,
+            freshness: snapshot.freshness,
+            quota: QuotaSnapshot(
+                planType: "pro",
+                weeklyRemainingPercent: 7,
+                weeklyResetsAt: nil,
+                source: .official,
+                fetchedAt: snapshot.quota.fetchedAt
+            ),
+            resetCredits: snapshot.resetCredits,
+            session: snapshot.session,
+            account: snapshot.account,
+            health: snapshot.health,
+            resetRadar: snapshot.resetRadar
+        )
+        let title = StatusTitleFormatter.format(lowQuota, segments: [.quota])
+        context.expectEqual(title.parts.first?.color, .danger)
+        context.expectEqual(title.text, "7%")
+    }
 }
 
 /// A source that always returns the same signals.

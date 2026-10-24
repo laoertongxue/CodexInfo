@@ -1,6 +1,7 @@
 import Foundation
 
 registerCoreTests()
+registerAppTests()
 registerMCPTests()
 registerLiveTests()
 

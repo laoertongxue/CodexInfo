@@ -9,7 +9,8 @@ let package = Package(
         .library(name: "CodexInfoMCPKit", targets: ["CodexInfoMCPKit"]),
         .library(name: "CodexInfoLive", targets: ["CodexInfoLive"]),
         .executable(name: "codexinfo-mcp", targets: ["CodexInfoMCP"]),
-        .executable(name: "codexinfo-tests", targets: ["CodexInfoTests"])
+        .executable(name: "codexinfo-tests", targets: ["CodexInfoTests"]),
+        .executable(name: "CodexInfoApp", targets: ["CodexInfoApp"])
     ],
     targets: [
         .target(name: "CodexInfoCore", path: "Sources/CodexInfoCore"),
@@ -32,6 +33,11 @@ let package = Package(
             name: "CodexInfoTests",
             dependencies: ["CodexInfoCore", "CodexInfoMCPKit", "CodexInfoLive"],
             path: "Sources/CodexInfoTests"
+        ),
+        .executableTarget(
+            name: "CodexInfoApp",
+            dependencies: ["CodexInfoCore", "CodexInfoLive"],
+            path: "Sources/CodexInfoApp"
         )
     ],
     swiftLanguageModes: [.v5]
