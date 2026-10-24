@@ -1935,6 +1935,23 @@ func registerCoreTests() {
         )
         context.expectEqual(enabled.events.count, 0)
     }
+
+    test("Quota service reports an expired login") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let client = OfficialUsageClient(
+            http: MockHTTPClient(error: HTTPError.status(401)),
+            credentials: StubCredentials(token: "tok_test"),
+            baseURL: URL(string: "https://chatgpt.com/backend-api")!
+        )
+        let fallback = StubQuotaFallback(snapshot: QuotaSnapshot(
+            planType: "pro", weeklyRemainingPercent: 71, weeklyResetsAt: nil,
+            source: .session, fetchedAt: now
+        ))
+        let service = QuotaService(official: client, fallback: fallback)
+        let snapshot = await service.quotaSnapshot(now: now)
+        context.expectEqual(snapshot?.authExpired, true)
+        context.expectEqual(snapshot?.weeklyRemainingPercent, 71)
+    }
 }
 
 /// A source that always returns the same signals.

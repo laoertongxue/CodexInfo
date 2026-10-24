@@ -48,6 +48,8 @@ export interface UsageSnapshot {
   generatedAt: string;
   freshness: Freshness;
   quota: {
+    /** The official read failed because the login expired. */
+    authExpired?: boolean;
     planType?: string | null;
     weeklyRemainingPercent?: number | null;
     weeklyResetsAt?: string | null;

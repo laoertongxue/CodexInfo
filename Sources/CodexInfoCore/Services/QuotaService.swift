@@ -23,7 +23,9 @@ public actor QuotaService: QuotaSnapshotProviding {
         if let cache, let cachedAt, now.timeIntervalSince(cachedAt) < AppConstants.refreshQuotaSeconds {
             return cache
         }
-        if let usage = try? await official.fetchUsage() {
+        var authExpired = false
+        do {
+            let usage = try await official.fetchUsage()
             let snapshotBucket = RateLimitBucketSelector.select(usage.rateLimitsByLimitID) ?? usage.rateLimits
             let weekly = snapshotBucket.flatMap(RateLimitWindowSelector.weekly)
             let snapshot = QuotaSnapshot(
@@ -36,11 +38,27 @@ public actor QuotaService: QuotaSnapshotProviding {
             cache = snapshot
             cachedAt = now
             return snapshot
+        } catch OfficialUsageError.unauthorized {
+            // The login expired: the session fallback may still answer, but the
+            // panel has to tell the user to sign in again.
+            authExpired = true
+        } catch HTTPError.status(let code) where code == 401 || code == 403 {
+            authExpired = true
+        } catch {
+            authExpired = false
         }
         if let fallbackSnapshot = await fallback?.fallbackQuota(now: now) {
-            cache = fallbackSnapshot
+            let snapshot = QuotaSnapshot(
+                planType: fallbackSnapshot.planType,
+                weeklyRemainingPercent: fallbackSnapshot.weeklyRemainingPercent,
+                weeklyResetsAt: fallbackSnapshot.weeklyResetsAt,
+                source: fallbackSnapshot.source,
+                fetchedAt: fallbackSnapshot.fetchedAt,
+                authExpired: authExpired
+            )
+            cache = snapshot
             cachedAt = now
-            return fallbackSnapshot
+            return snapshot
         }
         return cache
     }

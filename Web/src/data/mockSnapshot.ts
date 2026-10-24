@@ -124,6 +124,17 @@ export const mockSingleSourceSnapshot: UsageSnapshot = {
 };
 
 /**
+ * The login of the official read expired.
+ *
+ * The session fallback still provides the weekly quota, so the panel shows
+ * the quota and the re-login hint at the same time.
+ */
+export const mockLoginExpiredSnapshot: UsageSnapshot = {
+  ...mockSnapshot,
+  quota: { ...mockSnapshot.quota, authExpired: true },
+};
+
+/**
  * The reset cards could not be read.
  *
  * The payload still carries the cards of the last successful read, so the
@@ -178,6 +189,7 @@ export const mockSnapshots: Record<string, UsageSnapshot> = {
   "degraded-source": mockDegradedSourceSnapshot,
   "single-source": mockSingleSourceSnapshot,
   "credits-error": mockCreditsErrorSnapshot,
+  "login-expired": mockLoginExpiredSnapshot,
   "strong-unverified": mockStrongUnverifiedSnapshot,
   "status-confirming": mockStatusConfirmingSnapshot,
 };

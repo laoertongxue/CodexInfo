@@ -28,6 +28,7 @@ python3 "$ROOT/scripts/mcp_smoke.py" "$BIN"
 echo "==> Playwright suite"
 # The suite starts its own preview server on the built artifact, so the
 # single-file contract is what is tested.
+pnpm --dir "$ROOT/Web" exec playwright install chromium
 pnpm --dir "$ROOT/Web" exec playwright test
 
 echo "GATE OK"

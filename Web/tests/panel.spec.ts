@@ -178,3 +178,9 @@ test("the built artifact carries no external reference", () => {
   expect(html).not.toMatch(/<link[^>]+rel="stylesheet"/);
   expect(html).toContain("Content-Security-Policy");
 });
+
+test("an expired login asks the user to sign in again", async ({ page }) => {
+  await page.goto("/?fixture=login-expired");
+  await expect(page.getByTestId("login-hint")).toContainText("登录已失效");
+  await expect(page.getByTestId("weekly-quota")).toContainText("84%");
+});

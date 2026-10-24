@@ -214,6 +214,11 @@ function Panel({
               {quotaUsable ? `${formatDateTime(quota.weeklyResetsAt)} 重置 · ${formatRemaining(quota.weeklyResetsAt, now)}` : DASH}
             </span>
           </div>
+          {quota.authExpired ? (
+            <div className="tiny muted" data-testid="login-hint">
+              登录已失效，请在 Codex 中重新登录
+            </div>
+          ) : null}
         </Section>
 
         <Section id="reset-credit">
