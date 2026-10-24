@@ -28,7 +28,7 @@ public struct OpenAIStatusSource: ResetSource {
             sourceId: id,
             sourceName: displayName,
             kind: .status,
-            severity: indicator == "none" ? nil : "degraded",
+            severity: indicator == "none" ? nil : "incident",
             title: "OpenAI 服务状态：\(description)",
             summary: "服务状态指示灯：\(indicator)",
             publishedAt: updatedAt ?? now,

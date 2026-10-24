@@ -1345,6 +1345,97 @@ func registerCoreTests() {
         context.expectEqual(snapshot.sourcesAvailable, 2)
     }
 
+    test("ResetRadarService keeps a same-day status row out of the reset group") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 18, 12, in: calendar)
+        let record = radarSignal(
+            id: "record", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            title: "第 13 天额度重置完成", publishedAt: now
+        )
+        let feed = radarSignal(
+            id: "feed", sourceId: "ai-sentinel-signals", sourceName: "AI 哨兵信号",
+            title: "速蹬窗口关闭：Codex 与 ChatGPT Work 用量限制重置",
+            publishedAt: radarDate(2026, 10, 18, 8, in: calendar), verified: false
+        )
+        // The status row is published later than the reset, so it would be the
+        // newest member of the group and could split the event.
+        let status = radarSignal(
+            id: "openai-status:page:none", sourceId: "openai-status", sourceName: "官方状态",
+            title: "OpenAI 服务状态：All Systems Operational",
+            publishedAt: radarDate(2026, 10, 18, 11, in: calendar),
+            kind: .status, verified: false
+        )
+        let service = ResetRadarService(
+            sources: [
+                FakeResetSource(id: "ai-sentinel-records", name: "AI 哨兵记录", signals: [record]),
+                FakeResetSource(id: "ai-sentinel-signals", name: "AI 哨兵信号", signals: [feed]),
+                FakeResetSource(id: "openai-status", name: "官方状态", signals: [status]),
+            ],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestConfirmed?.confirmingSources.count, 2)
+        context.expectEqual(snapshot.recent.count, 2)
+        context.expectTrue(snapshot.recent.contains { $0.kind == .status })
+    }
+
+    test("ResetRadarService keeps a source healthy when the monitored service has an incident") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 18, 12, in: calendar)
+        let incident = radarSignal(
+            id: "openai-status:page:major", sourceId: "openai-status", sourceName: "官方状态",
+            title: "OpenAI 服务状态：Partial Outage",
+            publishedAt: now, kind: .status, severity: "incident", verified: false
+        )
+        let service = ResetRadarService(
+            sources: [FakeResetSource(id: "openai-status", name: "官方状态", signals: [incident])],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.sources.first?.state, .ok)
+        context.expectEqual(snapshot.sourcesAvailable, 1)
+    }
+
+    test("ResetRadarService marks a source degraded when the source itself is degraded") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 18, 12, in: calendar)
+        let degraded = radarSignal(
+            id: "codex-resets:status:unavailable", sourceId: "codex-resets", sourceName: "Codex Resets",
+            title: "Codex Resets 服务状态不可用",
+            publishedAt: now, kind: .status, severity: "degraded", verified: false
+        )
+        let service = ResetRadarService(
+            sources: [FakeResetSource(id: "codex-resets", name: "Codex Resets", signals: [degraded])],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.sources.first?.state, .degraded)
+        context.expectEqual(snapshot.sourcesAvailable, 1)
+    }
+
+    test("ResetRadarService joins a neighbouring day only inside the window") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 18, 12, in: calendar)
+        let near = radarSignal(
+            id: "near", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            title: "第 13 天额度重置完成", publishedAt: radarDate(2026, 10, 18, 23, in: calendar)
+        )
+        let closeNeighbour = radarSignal(
+            id: "close", sourceId: "ai-sentinel-signals", sourceName: "AI 哨兵信号",
+            title: "速蹬窗口关闭", publishedAt: radarDate(2026, 10, 19, 1, in: calendar), verified: false
+        )
+        let service = ResetRadarService(
+            sources: [
+                FakeResetSource(id: "ai-sentinel-records", name: "AI 哨兵记录", signals: [near]),
+                FakeResetSource(id: "ai-sentinel-signals", name: "AI 哨兵信号", signals: [closeNeighbour]),
+            ],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.recent.count, 1)
+        context.expectEqual(snapshot.latestConfirmed?.confirmingSources.count, 2)
+    }
+
     test("ResetRadarService keeps ten signals per source") { context in
         let calendar = radarCalendar()
         let now = radarDate(2026, 10, 24, 12, in: calendar)

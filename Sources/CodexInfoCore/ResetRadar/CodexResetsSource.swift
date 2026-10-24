@@ -74,7 +74,7 @@ public struct CodexResetsSource: ResetSource {
             signals.append(ResetSignal(
                 id: "\(id):status:\(indicator):\(codex)",
                 sourceId: id, sourceName: displayName, kind: .status,
-                severity: degraded ? "degraded" : nil,
+                severity: degraded ? "incident" : nil,
                 title: "Codex Resets 服务状态：\(description)",
                 summary: description,
                 publishedAt: DateParsing.iso8601(status["checked_at"] as? String) ?? now,

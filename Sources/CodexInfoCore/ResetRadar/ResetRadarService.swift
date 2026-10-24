@@ -213,7 +213,7 @@ public actor ResetRadarService {
                     sourceName: source.displayName,
                     state: .down,
                     lastSuccessAt: nil,
-                    lastError: nil,
+                    lastError: "尚未扫描",
                     nextScanAt: nil
                 )
             }
@@ -232,16 +232,27 @@ public actor ResetRadarService {
     /// decides between two groups of the same day. A signal without a date
     /// has no day and therefore stays on its own.
     static func group(_ signals: [ResetSignal], calendar: Calendar) -> [ResetSignal] {
-        var groups: [[ResetSignal]] = []
+        var eventGroups: [[ResetSignal]] = []
+        var statusRows: [ResetSignal] = []
         for signal in signals {
+            // A service status row is not part of a reset event, so it keeps
+            // its own line instead of joining a reset group.
+            guard signal.kind != .status else {
+                statusRows.append(signal)
+                continue
+            }
             guard signal.publishedAt != nil else {
-                groups.append([signal])
+                eventGroups.append([signal])
                 continue
             }
             var best: (index: Int, sameTitle: Bool)?
-            for (index, group) in groups.enumerated() {
-                guard let anchor = group.first, isSameEvent(anchor, signal, calendar: calendar) else { continue }
-                let sameTitle = normalizedTitle(anchor.title) == normalizedTitle(signal.title)
+            for (index, group) in eventGroups.enumerated() {
+                // The candidate joins the group when it describes the same
+                // occurrence as any member of it. The newest member can be an
+                // unrelated row, so the anchor must not be the only member
+                // that is compared.
+                guard group.contains(where: { isSameEvent($0, signal, calendar: calendar) }) else { continue }
+                let sameTitle = group.contains { normalizedTitle($0.title) == normalizedTitle(signal.title) }
                 if let current = best {
                     let better = sameTitle != current.sameTitle ? sameTitle : index < current.index
                     if !better { continue }
@@ -249,14 +260,13 @@ public actor ResetRadarService {
                 best = (index, sameTitle)
             }
             if let best {
-                groups[best.index].append(signal)
+                eventGroups[best.index].append(signal)
             } else {
-                groups.append([signal])
+                eventGroups.append([signal])
             }
         }
-        return groups
-            .map { merge($0) }
-            .sorted { ($0.publishedAt ?? .distantPast) > ($1.publishedAt ?? .distantPast) }
+        let groups = eventGroups.map { merge($0) } + statusRows
+        return groups.sorted { ($0.publishedAt ?? .distantPast) > ($1.publishedAt ?? .distantPast) }
     }
 
     /// Whether two signals describe the same occurrence.
@@ -396,10 +406,11 @@ public actor ResetRadarService {
         }
     }
 
-    /// Whether a source reported a degraded service.
+    /// Whether a source reported that it is degraded itself.
     ///
-    /// The Codex Resets source publishes the state of its own service, so a
-    /// degraded status signal degrades the source without taking it down.
+    /// Only a source-level failure degrades the source. A monitored service
+    /// that has an incident is reported with the severity `incident` and
+    /// leaves the source healthy, because the source answered correctly.
     private static func isDegraded(_ signals: [ResetSignal]) -> Bool {
         signals.contains { $0.kind == .status && $0.severity == "degraded" }
     }
