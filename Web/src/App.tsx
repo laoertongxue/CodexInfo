@@ -1,0 +1,419 @@
+import { useEffect, useState, type ReactNode, type RefObject } from "react";
+import { DASH, formatDateTime, formatRate, formatRemaining, formatTokens } from "./format";
+import { useHost } from "./host/useHost";
+import type { DataState, HealthStatus, ResetSignal, SourceState, UsageSnapshot } from "./data/types";
+import type { Host } from "./host/types";
+
+/** The four local verdicts of the model health. */
+const HEALTH_LABEL: Record<HealthStatus, string> = {
+  normal: "正常",
+  suspected: "疑似降智",
+  degraded: "已降智（本地判定）",
+  insufficient: "数据不足",
+};
+
+/** The health of a reset source. */
+const SOURCE_LABEL: Record<SourceState, string> = {
+  ok: "可用",
+  degraded: "降级",
+  down: "不可用",
+};
+
+/**
+ * The official status source is only a side signal: a service incident never
+ * proves a quota reset, so it never confirms one.
+ */
+const OFFICIAL_STATUS_SOURCE_IDS = new Set(["openai-status"]);
+const OFFICIAL_STATUS_SOURCE_NAMES = new Set(["官方状态"]);
+
+export function isOfficialStatusSource(name: string): boolean {
+  return OFFICIAL_STATUS_SOURCE_IDS.has(name) || OFFICIAL_STATUS_SOURCE_NAMES.has(name);
+}
+
+/** The reset-class sources that carry a record of the same reset. */
+export function confirmingResetSources(signal: ResetSignal): string[] {
+  return signal.confirmingSources.filter((name) => !isOfficialStatusSource(name));
+}
+
+/**
+ * Whether a reset group is confirmed.
+ *
+ * Only two independent reset sources confirm a group; a single source is
+ * shown as "单一来源".
+ */
+export function isConfirmedReset(signal: ResetSignal): boolean {
+  return confirmingResetSources(signal).length >= 2;
+}
+
+/** How the panel classifies a signal of the radar. */
+export type SignalTone = "strong" | "degraded" | "incident" | "none";
+
+/**
+ * The tone of a signal.
+ *
+ * A strong signal is a verified reset that the source marked as `strong`;
+ * `degraded` and `incident` are the two other severities of the vocabulary
+ * and never count as a reset confirmation.
+ */
+export function signalTone(signal: ResetSignal): SignalTone {
+  const severity = (signal.severity ?? "").toLowerCase();
+  if (severity === "degraded") return "degraded";
+  if (severity === "incident") return "incident";
+  if (signal.kind === "reset" && signal.verified && severity === "strong") return "strong";
+  return "none";
+}
+
+/** The label of a tone: 强信号 / 源不可用 / 服务故障. */
+const TONE_LABEL: Record<SignalTone, string> = {
+  strong: "强信号",
+  degraded: "源不可用",
+  incident: "服务故障",
+  none: "",
+};
+
+/** Whether the area carries a value that may be shown. */
+function usable(state: DataState): boolean {
+  return state !== "error" && state !== "loading";
+}
+
+/** The hint of an area whose data is old or missing. */
+function freshnessHint(state: DataState): string | null {
+  switch (state) {
+    case "stale":
+      return "数据可能过期";
+    case "loading":
+      return "载入中";
+    case "error":
+      return "数据不可用";
+    default:
+      return null;
+  }
+}
+
+function Section({ id, children }: { id: string; children: ReactNode }) {
+  return (
+    <section data-section={id} data-testid={id}>
+      {children}
+    </section>
+  );
+}
+
+function FreshnessHint({ state }: { state: DataState }) {
+  const hint = freshnessHint(state);
+  if (!hint) return null;
+  return <span className="tag">{hint}</span>;
+}
+
+function SignalBadge({ tone }: { tone: SignalTone }) {
+  if (tone === "none") return null;
+  return <span className={`tag tone-${tone}`}>{TONE_LABEL[tone]}</span>;
+}
+
+export default function App() {
+  const { snapshot, error, mode, host } = useHost();
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  if (error) return <main data-testid="panel" className="panel error">加载失败：{error}</main>;
+  if (!snapshot) return <main data-testid="panel" className="panel loading">加载中…</main>;
+  return <Panel snapshot={snapshot} now={now} host={host} mode={mode} />;
+}
+
+function Panel({
+  snapshot,
+  now,
+  host,
+  mode,
+}: {
+  snapshot: UsageSnapshot;
+  now: number;
+  host: RefObject<Host | null>;
+  mode: Host["mode"];
+}) {
+  const quota = snapshot.quota;
+  const credits = snapshot.resetCredits;
+  const session = snapshot.session;
+  const account = snapshot.account;
+  const health = snapshot.health;
+  const radar = snapshot.resetRadar;
+
+  const [healthOpen, setHealthOpen] = useState(health.status !== "normal");
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+
+  useEffect(() => {
+    if (health.status !== "normal") setHealthOpen(true);
+  }, [health.status]);
+
+  const quotaUsable = usable(snapshot.freshness.quota);
+  const sessionUsable = usable(snapshot.freshness.session);
+  const accountUsable = usable(snapshot.freshness.account);
+  const sourcesUsable = usable(snapshot.freshness.sources);
+
+  const contextPercent =
+    sessionUsable && session.contextWindow && session.contextTokens
+      ? Math.round((session.contextTokens / session.contextWindow) * 100)
+      : null;
+
+  const latest = radar.latestConfirmed ?? null;
+  const tone = latest ? signalTone(latest) : "none";
+  const confirmations = latest ? confirmingResetSources(latest) : [];
+  const confirmed = latest ? isConfirmedReset(latest) : false;
+  const sourcesAvailable = radar.sources.filter((source) => source.state !== "down").length;
+
+  return (
+    <main data-testid="panel" className="panel">
+      <header className="header">
+        <strong className="title">用量</strong>
+        <span className="badge" data-testid="plan-badge">
+          {quotaUsable ? (quota.planType ?? DASH) : DASH}
+        </span>
+        <button className="ghost" onClick={() => host.current?.refresh()}>
+          刷新
+        </button>
+        {mode !== "mcp" && (
+          <button className="close" onClick={() => host.current?.close()} aria-label="关闭">
+            ×
+          </button>
+        )}
+      </header>
+
+      <div className="body">
+        <Section id="quota">
+          <div className="row">
+            <span>
+              周额度 <FreshnessHint state={snapshot.freshness.quota} />
+            </span>
+            <strong data-testid="weekly-quota">
+              {quotaUsable && quota.weeklyRemainingPercent != null ? `剩余 ${quota.weeklyRemainingPercent}%` : DASH}
+            </strong>
+          </div>
+          <div className="bar">
+            <i style={{ width: `${quotaUsable ? (quota.weeklyRemainingPercent ?? 0) : 0}%` }} />
+          </div>
+          <div className="row tiny muted">
+            <span />
+            <span>
+              {quotaUsable ? `${formatDateTime(quota.weeklyResetsAt)} 重置 · ${formatRemaining(quota.weeklyResetsAt, now)}` : DASH}
+            </span>
+          </div>
+        </Section>
+
+        <Section id="reset-credit">
+          <div className="row">
+            <strong>重置卡</strong>
+            <strong data-testid="reset-credit-count">{credits.availableCount} 张</strong>
+          </div>
+          {credits.items.length === 0 ? (
+            <div className="tiny muted">暂无可用重置卡</div>
+          ) : (
+            credits.items.map((item, index) => (
+              <div className="row tiny" key={item.idSuffix}>
+                <span className="muted">
+                  第 {index + 1} 张 · {item.status === "available" ? "可用" : item.status}
+                </span>
+                <span className="right">
+                  {formatDateTime(item.expiresAt)} 到期
+                  <br />
+                  余 {formatRemaining(item.expiresAt, now)}
+                </span>
+              </div>
+            ))
+          )}
+        </Section>
+
+        <Section id="reset-radar">
+          <div className="row">
+            <strong>
+              重置追踪 <FreshnessHint state={snapshot.freshness.sources} />
+            </strong>
+            <button className="ghost" onClick={() => host.current?.scan()}>
+              立即扫描
+            </button>
+          </div>
+          <div className="row tiny">
+            <span className="muted">每 1 分钟扫描</span>
+            <span data-testid="source-availability">
+              {sourcesUsable ? `${sourcesAvailable}/${radar.sources.length} 来源可用` : DASH}
+            </span>
+          </div>
+
+          {latest && tone === "strong" ? (
+            <div className="quote" data-testid="reset-confirmation">
+              <div className="row tiny">
+                <span>
+                  {latest.title}
+                  {latest.summary ? `：${latest.summary}` : ""}
+                </span>
+                <SignalBadge tone={tone} />
+              </div>
+              <div className="tiny muted" data-testid="confirmation-state">
+                发布于 {formatDateTime(latest.publishedAt)} ·{" "}
+                {confirmed ? `来源已确认：${confirmations.join("、")}` : "单一来源"}
+              </div>
+              <div className="row tiny">
+                <span className="muted">适用范围</span>
+                <span>{latest.scope ?? DASH}</span>
+              </div>
+              {latest.url && (
+                <button className="link" onClick={() => host.current?.openURL(latest.url!)}>
+                  查看原始出处 ↗
+                </button>
+              )}
+            </div>
+          ) : latest ? (
+            <div className="quote" data-testid="reset-notice">
+              <div className="row tiny">
+                <span>
+                  {latest.title}
+                  {latest.summary ? `：${latest.summary}` : ""}
+                </span>
+                <SignalBadge tone={tone} />
+              </div>
+              <div className="tiny muted">
+                {tone === "incident"
+                  ? "服务故障不等于额度重置"
+                  : tone === "degraded"
+                    ? "来源暂不可用，未确认重置"
+                    : "未确认的重置记录"}
+              </div>
+              {latest.url && (
+                <button className="link" onClick={() => host.current?.openURL(latest.url!)}>
+                  查看来源 ↗
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="tiny muted">暂未确认的重置记录</div>
+          )}
+
+          <div className="row tiny muted">
+            <span>上次扫描 {sourcesUsable ? formatDateTime(radar.lastScanAt) : DASH}</span>
+            <span>下次 {sourcesUsable ? formatDateTime(radar.nextScanAt) : DASH}</span>
+          </div>
+          <button className="link" onClick={() => setSourcesOpen((value) => !value)}>
+            {sourcesOpen ? "收起" : "来源健康与近期记录"}
+          </button>
+          {sourcesOpen && (
+            <div className="sources" data-testid="radar-sources">
+              {radar.sources.map((source) => (
+                <div className="row tiny" key={source.sourceId}>
+                  <span>{source.sourceName}</span>
+                  <span className={source.state === "ok" ? "green" : "orange"}>
+                    {SOURCE_LABEL[source.state]}
+                    {source.lastError ? ` · ${source.lastError}` : ""}
+                  </span>
+                </div>
+              ))}
+              {radar.recent.slice(0, 5).map((signal) => (
+                <div className="row tiny" key={signal.id}>
+                  <span className="muted">{formatDateTime(signal.publishedAt)}</span>
+                  <span>{signal.title}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="tiny muted">系统通知未开启时，新动态仍在此处高亮。</div>
+          <div className="tiny muted">站点消息不等于个人额度恢复；无明确时间不推算倒计时。</div>
+        </Section>
+
+        <Section id="model-health">
+          <div className="row">
+            <strong>模型状态</strong>
+            <button
+              className={`pill ${health.status}`}
+              data-testid="health-verdict"
+              onClick={() => setHealthOpen((value) => !value)}
+            >
+              {HEALTH_LABEL[health.status]}
+            </button>
+          </div>
+          <div className="tiny muted">
+            {sessionUsable ? formatRate(session.outputTokensPerSecond) : DASH} · 首 token{" "}
+            {sessionUsable && session.ttftMs ? `${(session.ttftMs / 1000).toFixed(1)}s` : DASH} · {health.sampleTurns} 轮基线
+          </div>
+          <div className="tiny muted" data-testid="health-disclaimer">
+            {health.disclaimer}
+          </div>
+          {healthOpen && (
+            <div className="evidence" data-testid="health-evidence">
+              <div className="tiny muted">
+                基线：近 {health.baselineWindowDays} 天 · {health.model ?? DASH} · {health.effort ?? DASH}
+              </div>
+              {health.signals.map((signal) => (
+                <div className="row tiny" key={signal.id}>
+                  <span className={signal.flagged ? "orange" : "muted"}>{signal.label}</span>
+                  <span>{signal.detail}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+
+        <Section id="current-session">
+          <div className="row">
+            <strong>{session.label}</strong>
+            <span className="tiny muted">
+              {sessionUsable ? (session.isActive ? "生成中" : "空闲") : "无数据"}
+            </span>
+          </div>
+          <div className="row tiny">
+            <span className="muted">上下文</span>
+            <span>
+              {contextPercent == null
+                ? DASH
+                : `${contextPercent}% · ${formatTokens(session.contextTokens)} / ${formatTokens(session.contextWindow)}`}
+            </span>
+          </div>
+          <div className="row tiny">
+            <span className="muted">Token 总数</span>
+            <span>{sessionUsable ? formatTokens(session.totalTokens) : DASH}</span>
+          </div>
+          <div className="row tiny">
+            <span className="muted">输入 / 输出</span>
+            <span>
+              {sessionUsable ? `${formatTokens(session.inputTokens)} / ${formatTokens(session.outputTokens)}` : DASH}
+            </span>
+          </div>
+          <div className="row tiny">
+            <span className="muted">缓存读取</span>
+            <span>{sessionUsable ? formatTokens(session.cachedInputTokens) : DASH}</span>
+          </div>
+          <div className="row tiny new">
+            <span className="muted">输出速率</span>
+            <span>
+              <strong data-testid="output-rate">{sessionUsable ? formatRate(session.outputTokensPerSecond) : DASH}</strong>{" "}
+              <span className="muted">/ 中位 {sessionUsable ? formatRate(session.medianOutputTokensPerSecond) : DASH}</span>
+            </span>
+          </div>
+        </Section>
+
+        <Section id="account-stats">
+          <div className="subhead">
+            账号统计 <FreshnessHint state={snapshot.freshness.account} />
+          </div>
+          <div className="row tiny">
+            <span className="muted">账号今日 Token</span>
+            <span data-testid="account-today">{accountUsable ? formatTokens(account.todayTokens) : DASH}</span>
+          </div>
+          <div className="row tiny">
+            <span className="muted">账号累计 Token</span>
+            <span data-testid="account-total">{accountUsable ? formatTokens(account.totalTokens) : DASH}</span>
+          </div>
+          <div className="tiny muted">
+            更新于 {accountUsable ? formatDateTime(account.updatedAt) : DASH} · {accountUsable ? account.source : DASH}
+          </div>
+        </Section>
+      </div>
+
+      <footer className="footer">
+        {sessionUsable ? (session.model ?? DASH) : DASH} {sessionUsable ? (session.effort ?? "") : ""} · 额度{" "}
+        {quotaUsable && quota.weeklyRemainingPercent != null ? `${quota.weeklyRemainingPercent}%` : DASH} · 更新{" "}
+        {formatDateTime(snapshot.generatedAt)}
+      </footer>
+    </main>
+  );
+}

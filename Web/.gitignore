@@ -1,0 +1,5 @@
+# The build output of the single file panel
+dist/
+# The report of the Playwright runs
+test-results/
+playwright-report/
