@@ -81,7 +81,7 @@ public struct HealthSnapshot: Codable, Equatable, Sendable {
         model: nil,
         effort: nil,
         signals: [],
-        disclaimer: "基于本机基线，不代表官方结论"
+        disclaimer: "基于本机近 7 天基线，不代表官方结论"
     )
 }
 
