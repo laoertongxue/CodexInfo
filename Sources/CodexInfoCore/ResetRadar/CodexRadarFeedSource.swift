@@ -13,6 +13,7 @@ public struct CodexRadarFeedSource: ResetSource {
 
     public func fetch(using http: HTTPClient, now: Date) async throws -> [ResetSignal] {
         var request = URLRequest(url: URL(string: "https://codexradar.com/feed.xml")!)
+        request.httpMethod = "GET"
         request.timeoutInterval = 10
         request.setValue(AppConstants.userAgent, forHTTPHeaderField: "User-Agent")
         let response = try await http.send(request)
@@ -24,12 +25,15 @@ public struct CodexRadarFeedSource: ResetSource {
         guard parser.parse() else { return [] }
 
         return delegate.items.compactMap { item in
-            guard let title = item["title"], !title.isEmpty else { return nil }
+            guard let rawTitle = item["title"], !rawTitle.isEmpty else { return nil }
+            let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             let description = item["description"] ?? ""
             let verified = Self.isConfirmed(title: title, description: description)
-            // The feed publishes announcements: a previewed window is not a
-            // completed reset yet.
-            let kind: ResetSignalKind = title.contains("预告") || title.contains("窗口") ? .verifying : .reset
+            // The feed publishes both announcements and the closing of a
+            // window. A closed window is a completed reset, an open or
+            // previewed one is still `verifying`. `verified` stays false
+            // unless the item confirms the reset itself.
+            let kind: ResetSignalKind = (verified || Self.isCompletion(title: title, description: description)) ? .reset : .verifying
             let scope = Self.scope(in: description)
             let url = Self.linkURL(itemLink: item["link"], description: description)
             return ResetSignal(
@@ -47,6 +51,18 @@ public struct CodexRadarFeedSource: ResetSource {
                 confirmingSources: [displayName]
             )
         }
+    }
+
+    /// The item reports that the window closed and the reset landed.
+    ///
+    /// The feed uses the word 窗口 for an opening and for a closing, so the
+    /// closing wording is checked first.
+    static func isCompletion(title: String, description: String) -> Bool {
+        let text = title + "\n" + description
+        for phrase in ["窗口关闭", "已全部传播完成", "已完成", "已恢复", "恢复到 100%"] where text.contains(phrase) {
+            return true
+        }
+        return false
     }
 
     /// The item counts as confirmed only when its own text says so.
@@ -78,8 +94,10 @@ public struct CodexRadarFeedSource: ResetSource {
         for line in description.split(separator: "\n") {
             guard let range = line.range(of: "http") else { continue }
             // The line carries a label in front of the URL (`来源：https://…`),
-            // so the URL starts at the first `http`.
-            let candidate = line[range.lowerBound...].trimmingCharacters(in: .whitespaces)
+            // so the URL starts at the first `http` and ends at the first
+            // whitespace.
+            let candidate = line[range.lowerBound...]
+                .prefix { !$0.isWhitespace }
             if let url = URL(string: String(candidate)), url.scheme != nil { return url }
         }
         return nil

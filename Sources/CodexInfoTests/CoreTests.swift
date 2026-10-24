@@ -1195,6 +1195,47 @@ func registerCoreTests() {
         context.expectTrue(signals.contains { $0.kind == .verifying })
         context.expectTrue(signals.contains { $0.kind == .status })
     }
+
+    test("CodexRadarFeedSource keeps an announcement verifying and a closed window a reset") { context in
+        let xml = """
+        <rss><channel>
+        <item><title>Day 19：新一轮重置预告</title><guid>p</guid><pubDate>Sat, 24 Oct 2026 04:46:19 GMT</pubDate><description><![CDATA[速蹬窗口开启。\n适用范围：Codex 用户]]></description></item>
+        <item><title>速蹬窗口关闭</title><guid>c</guid><pubDate>Sat, 24 Oct 2026 08:46:19 GMT</pubDate><description><![CDATA[Tibo 表示重置已全部传播完成。\n适用范围：Codex 用户]]></description></item>
+        </channel></rss>
+        """
+        let http = MockHTTPClient(response: HTTPResponse(data: xml.data(using: .utf8)!, statusCode: 200))
+        let source = CodexRadarFeedSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(signals.count, 2)
+        let preview = signals.first { $0.title.contains("预告") }
+        let closed = signals.first { $0.title.contains("关闭") }
+        context.expectEqual(preview?.kind, .verifying)
+        context.expectEqual(preview?.verified, false)
+        context.expectEqual(closed?.kind, .reset)
+        context.expectEqual(closed?.verified, false)
+    }
+
+    test("CodexResetsSource keeps an unconfirmed claim verifying and never fabricates a strong severity") { context in
+        let feed = #"{"fetched_at":"2026-10-24T12:00:00Z","stale":false,"signal":{"summary":"Lands tomorrow","at":"2026-10-22T06:55:54Z","url":"https://x.com/example","kind":"signal","active":true},"tweets":[{"id":"t1","url":"https://x.com/t1","text":"That is a reset!","at":"2026-10-23T04:46:19Z","explicit_reset_claim":true,"reset_verification_status":"expired"},{"id":"t2","url":"https://x.com/t2","text":"Shipping notes","at":"2026-10-23T05:00:00Z","explicit_reset_claim":false}]}"#
+        let status = #"{"indicator":"none","description":"All Systems Operational","codex":"operational"}"#
+        let http = MockHTTPClient(responses: [
+            HTTPResponse(data: feed.data(using: .utf8)!, statusCode: 200),
+            HTTPResponse(data: status.data(using: .utf8)!, statusCode: 200),
+        ])
+        let source = CodexResetsSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        let claim = signals.first { $0.id.contains("tweet:t1") }
+        context.expectEqual(claim?.kind, .verifying)
+        context.expectEqual(claim?.verified, false)
+        context.expectEqual(signals.filter { $0.id.contains("tweet:t2") }.count, 0)
+        context.expectTrue(signals.allSatisfy { $0.severity != "strong" })
+    }
+
+    test("DateParsing reads the RSS time zones") { context in
+        context.expectEqual(DateParsing.rfc822("Sat, 17 Oct 2026 16:21:13 GMT")?.timeIntervalSince1970, 1_792_254_073)
+        context.expectEqual(DateParsing.rfc822("Sat, 17 Oct 2026 16:21:13 +0800")?.timeIntervalSince1970, 1_792_225_273)
+        context.expectEqual(DateParsing.rfc822("not a date"), nil)
+    }
 }
 
 /// Builds synthetic completed turns whose degradation severity grows with `severity`.
