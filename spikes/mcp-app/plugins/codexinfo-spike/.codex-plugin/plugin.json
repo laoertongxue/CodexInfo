@@ -1,0 +1,7 @@
+{
+  "name": "codexinfo-spike",
+  "version": "0.0.1",
+  "description": "M0 feasibility spike for CodexInfo MCP Apps.",
+  "author": { "name": "laoer" },
+  "mcpServers": "./.mcp.json"
+}
