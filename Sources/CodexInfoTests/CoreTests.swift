@@ -275,6 +275,78 @@ func registerCoreTests() {
             context.expectEqual(SessionLogParser.parse(line: Data(line.utf8)), nil, line)
         }
     }
+
+    test("TurnAggregator deduplicates responses and sums model time") { context in
+        let events: [SessionEvent] = [
+            .threadSettings(ThreadSettingsEvent(model: "gpt-6.1-sol", reasoningEffort: "xhigh", serviceTier: "default", provider: "openai")),
+            .turnContext(TurnContextEvent(turnId: "turn-1", model: "gpt-6.1-sol", reasoningEffort: "xhigh", compHash: "3000")),
+            .taskStarted(TaskStartedEvent(turnId: "turn-1", startedAt: Date(timeIntervalSince1970: 100))),
+            .tokenUsageRecord(TokenUsageRecordEvent(timestamp: nil, turnId: "turn-1", responseId: "resp-1", usage: TokenUsage(inputTokens: 100, cachedInputTokens: 80, cacheWriteInputTokens: 0, outputTokens: 50, reasoningOutputTokens: 10, totalTokens: 150), turnTokenUsage: .zero, threadTokenUsage: .zero)),
+            .tokenUsageRecord(TokenUsageRecordEvent(timestamp: nil, turnId: "turn-1", responseId: "resp-1", usage: TokenUsage(inputTokens: 100, cachedInputTokens: 80, cacheWriteInputTokens: 0, outputTokens: 50, reasoningOutputTokens: 10, totalTokens: 150), turnTokenUsage: .zero, threadTokenUsage: .zero)),
+            .tokenUsageRecord(TokenUsageRecordEvent(timestamp: nil, turnId: "turn-1", responseId: "resp-2", usage: TokenUsage(inputTokens: 20, cachedInputTokens: 10, cacheWriteInputTokens: 0, outputTokens: 50, reasoningOutputTokens: 0, totalTokens: 70), turnTokenUsage: .zero, threadTokenUsage: .zero)),
+            .itemCompleted(ItemCompletedEvent(turnId: "turn-1", itemType: "Reasoning", startedAtMs: 1_000, completedAtMs: 2_000)),
+            .itemCompleted(ItemCompletedEvent(turnId: "turn-1", itemType: "AgentMessage", startedAtMs: 2_000, completedAtMs: 3_000)),
+            .itemCompleted(ItemCompletedEvent(turnId: "turn-1", itemType: "CommandExecution", startedAtMs: 3_000, completedAtMs: 4_000)),
+            .itemCompleted(ItemCompletedEvent(turnId: "turn-1", itemType: "McpToolCall", startedAtMs: 4_000, completedAtMs: 4_500)),
+            .taskComplete(TaskCompleteEvent(turnId: "turn-1", durationMs: 5_000, ttftMs: 500, completedAt: Date(timeIntervalSince1970: 105))),
+        ]
+        let aggregate = TurnAggregator.aggregate(events)
+        context.expectEqual(aggregate.turns.count, 1)
+        let turn = aggregate.turns[0]
+        context.expectEqual(turn.outputTokens, 100)
+        context.expectEqual(turn.inputTokens, 120)
+        context.expectEqual(turn.cachedInputTokens, 90)
+        context.expectEqual(turn.reasoningOutputTokens, 10)
+        context.expectEqual(turn.modelItemMs, 2_000)
+        context.expectEqual(turn.toolMs, 1_500)
+        context.expectEqual(turn.toolCallCount, 2)
+        context.expectTrue(turn.isCompleted)
+        context.expectEqual(turn.model, "gpt-6.1-sol")
+        context.expectEqual(turn.serviceTier, "default")
+    }
+
+    test("OutputRateCalculator uses model item time and median") { context in
+        let turn = TurnMetrics(
+            turnId: "turn-1",
+            model: "gpt-6.1-sol",
+            reasoningEffort: "xhigh",
+            serviceTier: "default",
+            provider: "openai",
+            compHash: "3000",
+            startedAt: nil,
+            completedAt: nil,
+            durationMs: 5_000,
+            ttftMs: 500,
+            inputTokens: 100,
+            cachedInputTokens: 0,
+            outputTokens: 100,
+            reasoningOutputTokens: 20,
+            modelItemMs: 2_000,
+            toolMs: 1_000,
+            toolCallCount: 2,
+            isCompleted: true
+        )
+        let rate = OutputRateCalculator.rate(for: turn)
+        context.expectTrue(abs((rate?.tokensPerSecond ?? 0) - 50) < 0.01)
+        context.expectTrue(abs((rate?.reasoningShare ?? 0) - 0.2) < 0.0001)
+        context.expectTrue(abs((rate?.toolDensity ?? 0) - 20) < 0.0001)
+        context.expectEqual(OutputRateCalculator.medianRate([
+            TurnMetrics(turnId: "a", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil, startedAt: nil, completedAt: nil, durationMs: 1, ttftMs: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 10, reasoningOutputTokens: 0, modelItemMs: 1_000, toolMs: 0, toolCallCount: 0, isCompleted: true),
+            TurnMetrics(turnId: "b", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil, startedAt: nil, completedAt: nil, durationMs: 1, ttftMs: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 20, reasoningOutputTokens: 0, modelItemMs: 1_000, toolMs: 0, toolCallCount: 0, isCompleted: true),
+            TurnMetrics(turnId: "c", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil, startedAt: nil, completedAt: nil, durationMs: 1, ttftMs: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 30, reasoningOutputTokens: 0, modelItemMs: 1_000, toolMs: 0, toolCallCount: 0, isCompleted: true)
+        ]), 20)
+    }
+
+    test("OutputRateCalculator falls back to wall time minus tool time") { context in
+        let turn = TurnMetrics(
+            turnId: "turn-2", model: nil, reasoningEffort: nil, serviceTier: nil, provider: nil, compHash: nil,
+            startedAt: nil, completedAt: nil, durationMs: 5_000, ttftMs: 500,
+            inputTokens: 0, cachedInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0,
+            modelItemMs: 0, toolMs: 1_000, toolCallCount: 1, isCompleted: true
+        )
+        let rate = OutputRateCalculator.rate(for: turn)
+        context.expectTrue(abs((rate?.tokensPerSecond ?? 0) - 28.5714) < 0.01)
+    }
 }
 
 final class MockHTTPClient: HTTPClient, @unchecked Sendable {
