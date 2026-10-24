@@ -63,3 +63,9 @@ jobs:
 
       - name: Playwright suite
         run: pnpm --dir Web exec playwright test
+
+      - name: Build the app bundle
+        run: bash scripts/build-app.sh
+
+      - name: Verify the signature of the bundle
+        run: codesign --verify --deep --strict dist/CodexInfo.app
