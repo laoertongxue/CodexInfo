@@ -1,0 +1,60 @@
+name: ci
+
+# The gate of the project. The steps below mirror `scripts/test.sh`, so the
+# local command and the workflow run the same checks.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select the Swift 6 toolchain
+        run: |
+          set -euo pipefail
+          for version in 16.4 16.3 16.2 16.1 16.0; do
+            if [ -d "/Applications/Xcode_${version}.app" ]; then
+              sudo xcode-select --switch "/Applications/Xcode_${version}.app"
+              break
+            fi
+          done
+          xcode-select -p
+          swift --version
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: Web/pnpm-lock.yaml
+
+      - name: Swift suite
+        run: swift run codexinfo-tests
+
+      - name: Web build
+        run: bash scripts/build-web.sh
+
+      - name: Release build of the MCP server
+        run: swift build -c release --product codexinfo-mcp
+
+      - name: MCP smoke
+        run: python3 scripts/mcp_smoke.py "$(swift build -c release --show-bin-path)/codexinfo-mcp"
+
+      - name: Install chromium
+        run: pnpm --dir Web exec playwright install chromium
+
+      - name: Playwright suite
+        run: pnpm --dir Web exec playwright test
