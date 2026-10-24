@@ -114,9 +114,13 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
         refresh: Bool = false,
         windowDays: Int = 7
     ) async -> UsageSnapshot {
-        if !refresh, let cached = try? store.load(maxAge: AppConstants.refreshQuotaSeconds, now: now) {
+        if !refresh,
+           let cached = try? store.load(maxAge: AppConstants.refreshQuotaSeconds, now: now),
+           cached.health.baselineWindowDays == windowDays {
             return cached
         }
+        // A cached snapshot of another baseline window cannot answer this
+        // request, so it is rebuilt instead of returned.
         let snapshot = await builder.build(now: now, windowDays: windowDays)
         try? store.save(snapshot)
         return snapshot

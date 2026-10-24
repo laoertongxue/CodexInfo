@@ -1837,6 +1837,37 @@ func registerCoreTests() {
         context.expectTrue(!html.contains("<script src="), "the panel carries an external script")
         context.expectTrue(!html.contains("<link rel=\"stylesheet\""), "the panel carries an external style")
     }
+
+    test("SnapshotBuilder reads the session log once per build") { context in
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let session = directory.appendingPathComponent("session.jsonl")
+        let line = #"{"timestamp":"2026-10-24T02:48:22.880Z","type":"token_usage_record","payload":{"turn_id":"turn-1","response_id":"resp-1","usage":{"input_tokens":100,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":120},"turn_token_usage":{"input_tokens":100,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":120},"thread_token_usage":{"input_tokens":100,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":20,"reasoning_output_tokens":0,"total_tokens":120}}}"# + "\n"
+        try? line.write(to: session, atomically: true, encoding: .utf8)
+
+        let indexer = SessionIndexer(rootURL: directory, cacheURL: nil)
+        let repository = SessionRepository(indexer: indexer)
+        let builder = SnapshotBuilder(
+            quota: StubQuotaProvider(snapshot: QuotaSnapshot(
+                planType: "pro", weeklyRemainingPercent: 84, weeklyResetsAt: nil,
+                source: .official, fetchedAt: Date(timeIntervalSince1970: 1_790_000_000)
+            )),
+            credits: StubCreditsProvider(snapshot: ResetCreditsSnapshot(
+                availableCount: 0, reportedAvailableCount: 0, items: [],
+                fetchedAt: Date(timeIntervalSince1970: 1_790_000_000)
+            )),
+            sessions: repository,
+            account: StubAccountProvider(snapshot: AccountSnapshot(
+                todayTokens: 1, totalTokens: 2, source: "local",
+                updatedAt: Date(timeIntervalSince1970: 1_790_000_000)
+            )),
+            radar: StubRadarProvider(snapshot: .empty)
+        )
+        _ = await builder.build(now: Date(timeIntervalSince1970: 1_790_000_000))
+        let scans = await indexer.scans
+        context.expectEqual(scans, 1)
+    }
 }
 
 /// A source that always returns the same signals.
