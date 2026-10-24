@@ -180,7 +180,8 @@ public struct MCPRouter: Sendable {
             tool(
                 "scan_reset_sources",
                 "Scan the four reset sources and return their health.",
-                [:]
+                // The sources are optional: an empty list scans every source.
+                ["sourceIds": ["type": "array", "items": ["type": "string"]]]
             ),
             [
                 "name": "show_usage_panel",

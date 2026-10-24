@@ -253,6 +253,96 @@ func registerMCPTests() {
         }
         context.expectEqual(error["code"] as? Int, -32602)
     }
+
+    test("MCP get_model_health answers with the verdict") { context in
+        let service = RecordingMCPToolService()
+        let router = MCPRouter(toolService: service, panelHTML: "<html>panel</html>")
+        let responses = await router.handle(line: Data(#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_model_health","arguments":{"windowDays":14}}}"#.utf8))
+        guard let data = responses.first,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = object["result"] as? [String: Any],
+              let structured = result["structuredContent"] as? [String: Any] else {
+            context.fail("missing health result")
+            return
+        }
+        context.expectEqual(service.windowDays, 14)
+        context.expectEqual(structured["status"] as? String, "insufficient")
+    }
+
+    test("MCP scan_reset_sources answers with the source health") { context in
+        let router = MCPRouter(toolService: FakeMCPToolService(), panelHTML: "<html>panel</html>")
+        let responses = await router.handle(line: Data(#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"scan_reset_sources","arguments":{}}}"#.utf8))
+        guard let data = responses.first,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = object["result"] as? [String: Any],
+              let structured = result["structuredContent"] as? [String: Any] else {
+            context.fail("missing radar result")
+            return
+        }
+        context.expectTrue(structured["sources"] != nil)
+    }
+
+    test("MCP show_usage_panel returns the snapshot with the UI metadata") { context in
+        let router = MCPRouter(toolService: FakeMCPToolService(), panelHTML: "<html>panel</html>")
+        let responses = await router.handle(line: Data(#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"show_usage_panel","arguments":{}}}"#.utf8))
+        guard let data = responses.first,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = object["result"] as? [String: Any],
+              let meta = result["_meta"] as? [String: Any],
+              let structured = result["structuredContent"] as? [String: Any] else {
+            context.fail("missing panel result")
+            return
+        }
+        context.expectEqual((meta["ui"] as? [String: Any])?["resourceUri"] as? String, "ui://codexinfo/panel.html")
+        context.expectEqual(structured["quota"] != nil, true)
+    }
+
+    test("MCP open_dashboard opens the panel") { context in
+        let service = RecordingMCPToolService()
+        let router = MCPRouter(toolService: service, panelHTML: "<html>panel</html>")
+        let responses = await router.handle(line: Data(#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"open_dashboard","arguments":{}}}"#.utf8))
+        guard let data = responses.first,
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = object["result"] as? [String: Any],
+              let structured = result["structuredContent"] as? [String: Any] else {
+            context.fail("missing dashboard result")
+            return
+        }
+        context.expectEqual(service.openCount, 1)
+        context.expectEqual(structured["opened"] as? Bool, true)
+    }
+
+    test("MCP get_usage_snapshot forwards the refresh flag") { context in
+        let service = RecordingMCPToolService()
+        let router = MCPRouter(toolService: service, panelHTML: "<html>panel</html>")
+        _ = await router.handle(line: Data(#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"get_usage_snapshot","arguments":{"refresh":true}}}"#.utf8))
+        context.expectEqual(service.refresh, true)
+    }
+}
+
+/// A service that records how it was called.
+final class RecordingMCPToolService: MCPToolService, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _refresh: Bool?
+    private var _windowDays: Int?
+    private var _openCount = 0
+
+    var refresh: Bool? { lock.lock(); defer { lock.unlock() }; return _refresh }
+    var windowDays: Int? { lock.lock(); defer { lock.unlock() }; return _windowDays }
+    var openCount: Int { lock.lock(); defer { lock.unlock() }; return _openCount }
+
+    func usageSnapshot(refresh: Bool, now: Date) async throws -> UsageSnapshot {
+        lock.lock(); _refresh = refresh; lock.unlock()
+        return MCPTestFixtures.snapshot
+    }
+    func modelHealth(windowDays: Int, now: Date) async throws -> HealthSnapshot {
+        lock.lock(); _windowDays = windowDays; lock.unlock()
+        return .empty
+    }
+    func scanResetSources(now: Date) async throws -> ResetRadarSnapshot { .empty }
+    func openDashboard() async throws {
+        lock.lock(); _openCount += 1; lock.unlock()
+    }
 }
 
 struct FakeMCPToolService: MCPToolService {
