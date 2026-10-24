@@ -44,6 +44,27 @@ public enum BaselineBuilder {
     /// The seconds of one day.
     static let day: TimeInterval = 86_400
 
+    /// The turns of the window that can carry a baseline sample at all.
+    ///
+    /// This is the sample without any route filter, so it can report how many
+    /// turns exist even when the current route is unknown.
+    public static func usableTurns(
+        from turns: [TurnMetrics],
+        now: Date,
+        windowDays: Int = 7
+    ) -> [TurnMetrics] {
+        let start = now.addingTimeInterval(-Double(windowDays) * day)
+        return chronological(turns.filter { turn in
+            guard turn.isCompleted else { return false }
+            guard (turn.completedAt ?? .distantPast) >= start else { return false }
+            // A turn without a duration or without a token usage record cannot
+            // carry a baseline sample.
+            guard (turn.durationMs ?? 0) > 0 else { return false }
+            guard turn.inputTokens + turn.outputTokens > 0 else { return false }
+            return true
+        })
+    }
+
     /// The turns of one baseline sample, oldest first.
     ///
     /// A sample turn is completed, finished inside the window, has a positive
@@ -62,14 +83,7 @@ public enum BaselineBuilder {
         serviceTier: String? = nil,
         provider: String? = nil
     ) -> [TurnMetrics] {
-        let start = now.addingTimeInterval(-Double(windowDays) * day)
-        let usable = turns.filter { turn in
-            guard turn.isCompleted else { return false }
-            guard (turn.completedAt ?? .distantPast) >= start else { return false }
-            // A turn without a duration or without a token usage record cannot
-            // carry a baseline sample.
-            guard (turn.durationMs ?? 0) > 0 else { return false }
-            guard turn.inputTokens + turn.outputTokens > 0 else { return false }
+        let usable = usableTurns(from: turns, now: now, windowDays: windowDays).filter { turn in
             if let model = model, turn.model != model { return false }
             if let effort = effort, turn.reasoningEffort != effort { return false }
             if let serviceTier = serviceTier {

@@ -147,14 +147,15 @@ public enum DegradationAnalyzer {
 
     /// The number of turns of the window that can carry a baseline sample.
     ///
-    /// Without a known route the sample cannot be narrowed down, so the count
-    /// covers the turns that are usable at all.
+    /// The count ignores the route keys on purpose: the route of the current
+    /// turn may be unknown, and the panel still has to show how many turns
+    /// this machine recorded.
     private static func usableBaselineCount(
         _ baselineTurns: [TurnMetrics],
         now: Date,
         windowDays: Int
     ) -> Int {
-        BaselineBuilder.eligibleTurns(from: baselineTurns, now: now, windowDays: windowDays).count
+        BaselineBuilder.usableTurns(from: baselineTurns, now: now, windowDays: windowDays).count
     }
 
     /// The robust z score of one value, or `nil` when the baseline has no

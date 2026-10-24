@@ -1064,6 +1064,25 @@ func registerCoreTests() {
         context.expectEqual(conservative.signals.first { $0.id == .ttft }?.flagged, false)
     }
 
+    test("DegradationAnalyzer counts usable turns on the insufficient paths") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let stale = DegradationAnalyzer.analyze(
+            baselineTurns: baseline,
+            currentTurns: [makeTurn(id: "x-1", completedAt: now.addingTimeInterval(-3 * 86_400))],
+            routeMismatch: false, now: now, windowDays: 7, thresholds: .standard
+        )
+        let unknown = DegradationAnalyzer.analyze(
+            baselineTurns: baseline,
+            currentTurns: [makeTurn(id: "x-2", model: nil, completedAt: now)],
+            routeMismatch: false, now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(stale.status, .insufficient)
+        context.expectEqual(stale.sampleTurns, 8)
+        context.expectEqual(unknown.status, .insufficient)
+        context.expectEqual(unknown.sampleTurns, 8)
+    }
+
     test("DegradationAnalyzer states the baseline disclaimer on every path") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
         let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
