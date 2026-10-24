@@ -110,6 +110,35 @@ func registerCoreTests() {
         _ = await service.quotaSnapshot(now: Date(timeIntervalSince1970: 130))
         context.expectEqual(http.requestCount, 1)
     }
+
+    test("Reset credits sort by expiry and filter expired cards") { context in
+        let now = DateParsing.iso8601("2026-10-24T00:00:00Z")!
+        let response = #"{"available_count":3,"credits":[{"id":"card_123456","status":"available","granted_at":"2026-10-01T00:00:00Z","expires_at":"2026-11-07T07:55:00+08:00","title":"later"},{"id":"card_654321","status":"available","granted_at":"2026-10-01T00:00:00Z","expires_at":"2026-10-20T07:55:00+08:00","title":"expired"},{"id":"card_999999","status":"redeemed","granted_at":"2026-10-01T00:00:00Z","expires_at":"2026-12-07T07:55:00+08:00","title":"used"}]}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: response.data(using: .utf8)!, statusCode: 200))
+        let client = OfficialResetCreditsClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let snapshot = try await client.fetch(now: now)
+        context.expectEqual(snapshot.availableCount, 1)
+        context.expectEqual(snapshot.reportedAvailableCount, 3)
+        context.expectEqual(snapshot.items.first?.title, "later")
+        context.expectEqual(snapshot.items.first?.idSuffix, "123456")
+        context.expectEqual(http.lastRequest?.url?.path, "/backend-api/wham/rate-limit-reset-credits")
+    }
+
+    test("ResetCreditService falls back when official request fails") { context in
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let http = MockHTTPClient(error: HTTPError.status(500))
+        let client = OfficialResetCreditsClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let fallback = StubResetCreditFallback(snapshot: ResetCreditsSnapshot(
+            availableCount: 1,
+            reportedAvailableCount: nil,
+            items: [ResetCredit(id: "fallback000001", status: "available", grantedAt: nil, expiresAt: nil, title: "fallback")],
+            fetchedAt: now
+        ))
+        let service = ResetCreditService(official: client, fallback: fallback)
+        let snapshot = await service.creditsSnapshot(now: now)
+        context.expectEqual(snapshot?.availableCount, 1)
+        context.expectEqual(snapshot?.items.first?.title, "fallback")
+    }
 }
 
 final class MockHTTPClient: HTTPClient, @unchecked Sendable {
@@ -137,4 +166,9 @@ struct StubCredentials: CredentialProviding {
 struct StubQuotaFallback: QuotaFallbackProviding {
     let snapshot: QuotaSnapshot?
     func fallbackQuota(now: Date) async -> QuotaSnapshot? { snapshot }
+}
+
+struct StubResetCreditFallback: ResetCreditFallbackProviding {
+    let snapshot: ResetCreditsSnapshot?
+    func fallbackCredits(now: Date) async -> ResetCreditsSnapshot? { snapshot }
 }
