@@ -368,8 +368,11 @@ CodexInfo/
 ├─ Sources/
 │  ├─ CodexInfoCore/          # 数据与判定
 │  │  └─ Generated/WebAssets.swift  # 由 Web 构建生成并提交
+│  ├─ CodexInfoLive/          # live 服务装配（App/MCP 共用）
+│  ├─ CodexInfoMCPKit/        # MCP 协议路由与工具接口
 │  ├─ CodexInfoApp/           # 菜单栏 App
-│  └─ CodexInfoMCP/           # MCP server
+│  ├─ CodexInfoMCP/           # MCP server
+│  └─ CodexInfoTests/         # 自定义测试执行器
 ├─ Web/                       # React + Vite，构建单文件面板
 ├─ .agents/plugins/marketplace.json
 ├─ plugins/codexinfo/
@@ -404,6 +407,8 @@ CodexInfo/
 | `SnapshotBuilder` | 汇总各服务为统一快照 |
 | `SnapshotStore` | 原子写快照/索引/源缓存/基线 |
 | `NotificationService` | 本地通知与权限状态 |
+
+`CodexInfoLive` 负责装配 live 服务；`CodexInfoMCPKit` 负责 MCP 路由；`CodexInfoTests` 是自定义测试执行器。
 
 ### 6.3 数据流与缓存
 
@@ -501,6 +506,7 @@ skill `codex-usage`：
 - `scripts/build-web.sh`：Vite 单文件构建 + 生成 `WebAssets.swift`。
 - `scripts/build-app.sh`：`swift build -c release`，组装 `dist/CodexInfo.app`，写 `Info.plist`，ad-hoc 签名。
 - `scripts/install-plugin.sh`：构建 `codexinfo-mcp`，复制到 `plugins/codexinfo/bin/`，生成绝对路径 `.mcp.json`，打印配置步骤。
+- `scripts/test.sh`：`swift run codexinfo-tests` + Web build + MCP 冒烟。
 - `scripts/dev.sh`：启动 Vite dev server + mock bridge + App（debug），用于 UI 迭代。
 - `Info.plist`：`LSUIElement=true`、`CFBundleURLTypes=codexinfo`、`LSMinimumSystemVersion=14.0`。
 - 本地开发使用 ad-hoc 签名；分发公证放到后续版本。
@@ -531,7 +537,11 @@ skill `codex-usage`：
 
 ## 7. 测试与验收
 
-### 7.1 单元测试
+### 7.1 单元测试（自定义 Swift 测试器）
+
+本机只有 CommandLineTools，XCTest 与 Swift Testing 宏不可用；使用 `CodexInfoTests` 自定义执行器：
+
+`swift run codexinfo-tests [--filter <name>]`，失败返回非 0。
 
 - 额度：槽位互换、300/10080 分桶、`limit_id` 过滤、`used_percent` 边界、`resets_at` 缺失。
 - 重置卡：排序、过期过滤、<72h/<24h 阈值、ID 脱敏。
@@ -568,7 +578,7 @@ skill `codex-usage`：
 ### 7.5 性能与 CI
 
 - 冷启动面板 ≤2s（有快照）；会话冷索引 ≤10s；增量 ≤100ms；常驻内存 ≤150MB。
-- GitHub Actions `macos-14`：`swift test` + Web build + MCP 契约测试；视觉快照仅本地。
+- GitHub Actions `macos-14`：`swift run codexinfo-tests` + Web build + MCP 契约测试；视觉快照仅本地。
 - 完成定义：命令全部通过并贴输出；手动验收 1–7 逐项打勾。
 
 ## 8. 里程碑
@@ -632,6 +642,7 @@ M0 是硬门槛：若本地插件无法渲染 MCP App，立即切“插件文本
 | D6 | 允许直读 auth.json，仅内存驻留 | 账号统计与重置卡需要官方接口；用户明确允许 |
 | D7 | 不做自动用卡/购买/注入 | 风险高、不可逆；本期只读 |
 | D8 | M0 先验 MCP App，失败即降级 | 插件宿主能力是最大不确定性 |
+| D9 | 自定义 Swift 测试执行器 | 本机无 XCTest/Swift Testing 宏；零安装可跑，CI 同命令 |
 
 ## 12. 附录 A：快照 JSON
 
