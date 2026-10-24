@@ -29,4 +29,21 @@ public enum DateParsing {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.date(from: string)
     }
+
+    /// Parses an RFC 822 date such as `Sat, 17 Oct 2026 16:21:13 GMT`.
+    ///
+    /// The RSS feed publishes the publication time in this format. The zone is
+    /// read from the string itself (`GMT`, `+0000` or a numeric offset) and
+    /// only falls back to GMT when the string carries none.
+    public static func rfc822(_ string: String?) -> Date? {
+        guard let string else { return nil }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss Z"
+        return formatter.date(from: trimmed)
+    }
 }

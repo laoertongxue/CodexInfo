@@ -1157,13 +1157,43 @@ func registerCoreTests() {
 
     test("OpenAIStatusSource keeps a stable id and never marks a strong signal") { context in
         let json = #"{"page":{"id":"page-1","updated_at":"2026-10-24T12:00:00Z"},"status":{"indicator":"major","description":"Partial Outage"}}"#
-        let http = MockHTTPClient(response: HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200))
+        // The mock hands out one response per request, so the two scans of the
+        // source need one response each.
+        let http = MockHTTPClient(responses: [
+            HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200),
+            HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200),
+        ])
         let source = OpenAIStatusSource()
         let first = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
         let second = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_100_000))
         context.expectEqual(first.first?.id, second.first?.id)
         context.expectEqual(first.first?.severity, "degraded")
         context.expectEqual(first.first?.kind, .status)
+    }
+
+    test("CodexRadarFeedSource parses verified RSS items") { context in
+        let xml = """
+        <rss><channel><item><title>官方权益确认：Codex 用量限制重置</title><link>https://codexradar.com/#a</link><guid>a</guid><pubDate>Sat, 17 Oct 2026 16:21:13 GMT</pubDate><description><![CDATA[官方重置卡或权益发放信号。\n适用范围：Codex 用户\n来源：https://x.com/example]]></description></item></channel></rss>
+        """
+        let http = MockHTTPClient(response: HTTPResponse(data: xml.data(using: .utf8)!, statusCode: 200))
+        let source = CodexRadarFeedSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(signals.count, 1)
+        context.expectEqual(signals.first?.verified, true)
+        context.expectEqual(signals.first?.scope, "Codex 用户")
+    }
+
+    test("CodexResetsSource parses signal and status") { context in
+        let feed = #"{"fetched_at":"2026-10-24T12:00:00Z","signal":{"summary":"Lands tomorrow","at":"2026-10-22T06:55:54Z","url":"https://x.com/example","kind":"signal"},"tweets":[]}"#
+        let status = #"{"indicator":"none","description":"All Systems Operational","codex":"operational"}"#
+        let http = MockHTTPClient(responses: [
+            HTTPResponse(data: feed.data(using: .utf8)!, statusCode: 200),
+            HTTPResponse(data: status.data(using: .utf8)!, statusCode: 200),
+        ])
+        let source = CodexResetsSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectTrue(signals.contains { $0.kind == .verifying })
+        context.expectTrue(signals.contains { $0.kind == .status })
     }
 }
 
@@ -1297,19 +1327,21 @@ final class SessionAppender: @unchecked Sendable {
 }
 
 final class MockHTTPClient: HTTPClient, @unchecked Sendable {
-    let response: HTTPResponse?
-    let error: Error?
+    private var responses: [HTTPResponse]
+    private let error: Error?
     private(set) var lastRequest: URLRequest?
     private(set) var requestCount = 0
 
-    init(response: HTTPResponse) { self.response = response; self.error = nil }
-    init(error: Error) { self.response = nil; self.error = error }
+    init(response: HTTPResponse) { self.responses = [response]; self.error = nil }
+    init(responses: [HTTPResponse]) { self.responses = responses; self.error = nil }
+    init(error: Error) { self.responses = []; self.error = error }
 
     func send(_ request: URLRequest) async throws -> HTTPResponse {
         lastRequest = request
         requestCount += 1
         if let error { throw error }
-        return response!
+        guard !responses.isEmpty else { throw HTTPError.emptyResponse }
+        return responses.removeFirst()
     }
 }
 
