@@ -64,4 +64,77 @@ func registerCoreTests() {
         let selected = RateLimitBucketSelector.select(["decoy": decoy, "codex": codex])
         context.expectEqual(selected?.limitId, "codex")
     }
+
+    test("Quota official client sends bearer token and maps weekly quota") { context in
+        let http = MockHTTPClient(response: HTTPResponse(
+            data: #"{"plan_type":"pro","rate_limits":{"limit_id":"codex","primary":{"used_percent":16,"window_minutes":10080,"resets_at":200},"secondary":null}}"#.data(using: .utf8)!,
+            statusCode: 200
+        ))
+        let client = OfficialUsageClient(
+            http: http,
+            credentials: StubCredentials(token: "tok_test"),
+            baseURL: URL(string: "https://chatgpt.com/backend-api")!
+        )
+        let usage = try await client.fetchUsage()
+        context.expectEqual(usage.planType, "pro")
+        context.expectEqual(usage.rateLimits?.limitId, "codex")
+        context.expectEqual(RateLimitWindowSelector.weekly(from: usage.rateLimits!)?.remainingPercent, 84)
+        context.expectEqual(http.lastRequest?.url?.path, "/backend-api/wham/usage")
+        context.expectEqual(http.lastRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer tok_test")
+    }
+
+    test("QuotaService uses fallback when official request fails") { context in
+        let http = MockHTTPClient(error: HTTPError.status(500))
+        let client = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let fallback = StubQuotaFallback(snapshot: QuotaSnapshot(
+            planType: "pro",
+            weeklyRemainingPercent: 72,
+            weeklyResetsAt: Date(timeIntervalSince1970: 300),
+            source: .session,
+            fetchedAt: Date(timeIntervalSince1970: 100)
+        ))
+        let service = QuotaService(official: client, fallback: fallback)
+        let snapshot = await service.quotaSnapshot(now: Date(timeIntervalSince1970: 100))
+        context.expectEqual(snapshot?.weeklyRemainingPercent, 72)
+        context.expectEqual(snapshot?.source, .session)
+    }
+
+    test("QuotaService caches official result for 60 seconds") { context in
+        let http = MockHTTPClient(response: HTTPResponse(
+            data: #"{"plan_type":"pro","rate_limits":{"limit_id":"codex","primary":{"used_percent":16,"window_minutes":10080,"resets_at":200},"secondary":null}}"#.data(using: .utf8)!,
+            statusCode: 200
+        ))
+        let client = OfficialUsageClient(http: http, credentials: StubCredentials(token: "tok_test"), baseURL: URL(string: "https://chatgpt.com/backend-api")!)
+        let service = QuotaService(official: client, fallback: nil)
+        _ = await service.quotaSnapshot(now: Date(timeIntervalSince1970: 100))
+        _ = await service.quotaSnapshot(now: Date(timeIntervalSince1970: 130))
+        context.expectEqual(http.requestCount, 1)
+    }
+}
+
+final class MockHTTPClient: HTTPClient, @unchecked Sendable {
+    let response: HTTPResponse?
+    let error: Error?
+    private(set) var lastRequest: URLRequest?
+    private(set) var requestCount = 0
+
+    init(response: HTTPResponse) { self.response = response; self.error = nil }
+    init(error: Error) { self.response = nil; self.error = error }
+
+    func send(_ request: URLRequest) async throws -> HTTPResponse {
+        lastRequest = request
+        requestCount += 1
+        if let error { throw error }
+        return response!
+    }
+}
+
+struct StubCredentials: CredentialProviding {
+    let token: String
+    func load() throws -> CodexCredentials { CodexCredentials(accessToken: token) }
+}
+
+struct StubQuotaFallback: QuotaFallbackProviding {
+    let snapshot: QuotaSnapshot?
+    func fallbackQuota(now: Date) async -> QuotaSnapshot? { snapshot }
 }
