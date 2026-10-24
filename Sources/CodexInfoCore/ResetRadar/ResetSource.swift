@@ -34,6 +34,8 @@ public struct ResetSignal: Codable, Equatable, Sendable, Identifiable {
     public let verified: Bool
     public let scope: String?
     public let confirmingSources: [String]
+    /// A short hash of the raw payload the source published for this record.
+    public let rawHash: String?
 
     /// Creates a signal. The labels match the normalized field names of the
     /// design spec, so the separate test module can build signals directly.
@@ -49,7 +51,8 @@ public struct ResetSignal: Codable, Equatable, Sendable, Identifiable {
         url: URL? = nil,
         verified: Bool,
         scope: String? = nil,
-        confirmingSources: [String] = []
+        confirmingSources: [String] = [],
+        rawHash: String? = nil
     ) {
         self.id = id
         self.sourceId = sourceId
@@ -63,6 +66,15 @@ public struct ResetSignal: Codable, Equatable, Sendable, Identifiable {
         self.verified = verified
         self.scope = scope
         self.confirmingSources = confirmingSources
+        self.rawHash = rawHash
+    }
+
+    /// Whether the signal may raise a strong notification.
+    ///
+    /// A strong notification needs a completed reset that the source verified
+    /// and marked as `strong`. A plain `kind == .reset` never qualifies.
+    public var isStrongNotificationCandidate: Bool {
+        kind == .reset && verified && severity == "strong"
     }
 }
 

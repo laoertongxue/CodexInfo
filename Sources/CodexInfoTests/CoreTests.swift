@@ -1242,6 +1242,425 @@ func registerCoreTests() {
         context.expectEqual(DateParsing.rfc822("Sat, 17 Oct 2026 16:21:13 +0800")?.timeIntervalSince1970, 1_792_225_273)
         context.expectEqual(DateParsing.rfc822("not a date"), nil)
     }
+
+    test("ResetRadarService cross-confirms two sources") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let signalA = ResetSignal(
+            id: "reset:a", sourceId: "a", sourceName: "AI 哨兵记录", kind: .reset,
+            severity: nil, title: "重置完成", summary: "", publishedAt: now,
+            url: nil, verified: true, scope: "所有付费用户",
+            confirmingSources: ["AI 哨兵记录"]
+        )
+        let signalB = ResetSignal(
+            id: "reset:b", sourceId: "b", sourceName: "AI 哨兵信号", kind: .reset,
+            severity: nil, title: "重置完成", summary: "", publishedAt: now,
+            url: nil, verified: true, scope: "所有付费用户",
+            confirmingSources: ["AI 哨兵信号"]
+        )
+        let sourceA = FakeResetSource(id: "a", name: "AI 哨兵记录", signals: [signalA])
+        let sourceB = FakeResetSource(id: "b", name: "AI 哨兵信号", signals: [signalB])
+        let service = ResetRadarService(sources: [sourceA, sourceB], http: MockHTTPClient(responses: []), interval: 60)
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestConfirmed?.confirmingSources.count, 2)
+    }
+
+    test("ResetRadarService marks a failed source down") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let good = FakeResetSource(id: "a", name: "AI 哨兵记录", signals: [])
+        let bad = FailingResetSource(id: "b", name: "Codex Resets")
+        let service = ResetRadarService(sources: [good, bad], http: MockHTTPClient(responses: []), interval: 60)
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.sourcesAvailable, 1)
+        context.expectEqual(snapshot.sources.first { $0.sourceId == "b" }?.state, .down)
+    }
+
+    test("ResetRadarService keeps a single source group unconfirmed") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 18, 12, in: calendar)
+        let signal = radarSignal(
+            id: "record", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            title: "第 13 天额度重置完成", publishedAt: now
+        )
+        let service = ResetRadarService(
+            sources: [FakeResetSource(id: "ai-sentinel-records", name: "AI 哨兵记录", signals: [signal])],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestConfirmed, nil)
+        context.expectEqual(snapshot.recent.count, 1)
+        context.expectEqual(snapshot.recent.first?.confirmingSources.count, 1)
+        context.expectEqual(snapshot.recent.first?.confirmingSources, ["AI 哨兵记录"])
+    }
+
+    test("ResetRadarService confirms two differently titled signals of the same day") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 18, 12, in: calendar)
+        let record = radarSignal(
+            id: "record", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            title: "第 13 天额度重置完成", publishedAt: now
+        )
+        let feed = radarSignal(
+            id: "feed", sourceId: "ai-sentinel-signals", sourceName: "AI 哨兵信号",
+            title: "速蹬窗口关闭：Codex 与 ChatGPT Work 用量限制重置",
+            publishedAt: radarDate(2026, 10, 18, 8, in: calendar), verified: false
+        )
+        let service = ResetRadarService(
+            sources: [
+                FakeResetSource(id: "ai-sentinel-records", name: "AI 哨兵记录", signals: [record]),
+                FakeResetSource(id: "ai-sentinel-signals", name: "AI 哨兵信号", signals: [feed]),
+            ],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        // One day is one event, even when the sources title it differently.
+        context.expectEqual(snapshot.recent.count, 1)
+        context.expectEqual(snapshot.latestConfirmed?.confirmingSources.count, 2)
+        context.expectEqual(snapshot.latestConfirmed?.title, "第 13 天额度重置完成")
+    }
+
+    test("ResetRadarService never confirms from the official status source") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 18, 12, in: calendar)
+        let record = radarSignal(
+            id: "record", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            title: "第 13 天额度重置完成", publishedAt: now
+        )
+        let status = ResetSignal(
+            id: "openai-status:page:none", sourceId: "openai-status", sourceName: "官方状态",
+            kind: .status, severity: nil, title: "OpenAI 服务状态：All Systems Operational",
+            summary: "", publishedAt: now, url: nil, verified: false, scope: "所有用户",
+            confirmingSources: ["官方状态"]
+        )
+        let service = ResetRadarService(
+            sources: [
+                FakeResetSource(id: "ai-sentinel-records", name: "AI 哨兵记录", signals: [record]),
+                FakeResetSource(id: "openai-status", name: "官方状态", signals: [status]),
+            ],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestConfirmed, nil)
+        context.expectEqual(snapshot.recent.first?.confirmingSources.count, 1)
+        context.expectTrue(snapshot.recent.first?.confirmingSources.contains("官方状态") == false)
+        context.expectEqual(snapshot.sourcesAvailable, 2)
+    }
+
+    test("ResetRadarService keeps ten signals per source") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 24, 12, in: calendar)
+        let signals = (0..<15).map { offset in
+            radarSignal(
+                id: "a:\(offset)", sourceId: "a", sourceName: "AI 哨兵记录",
+                title: "第 \(offset) 天重置完成",
+                publishedAt: radarDay(now, offset: -offset, in: calendar)
+            )
+        }
+        let service = ResetRadarService(
+            sources: [FakeResetSource(id: "a", name: "AI 哨兵记录", signals: signals)],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.recent.count, 10)
+        context.expectEqual(snapshot.recent.map { $0.id }, (0..<10).map { "a:\($0)" })
+    }
+
+    test("ResetRadarService keeps twenty signals in total") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 24, 12, in: calendar)
+        let names = ["AI 哨兵记录", "AI 哨兵信号", "Codex Resets"]
+        var sources: [ResetSource] = []
+        for (index, name) in names.enumerated() {
+            let signals = (0..<10).map { day in
+                radarSignal(
+                    id: "\(index):\(day)", sourceId: "source-\(index)", sourceName: name,
+                    title: "第 \(day) 天重置完成",
+                    publishedAt: radarDay(now, offset: -(index * 10 + day), in: calendar)
+                )
+            }
+            sources.append(FakeResetSource(id: "source-\(index)", name: name, signals: signals))
+        }
+        let service = ResetRadarService(
+            sources: sources, http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.recent.count, 20)
+        context.expectEqual(snapshot.recent.first?.id, "0:0")
+        // The oldest source is dropped, the newest signals win.
+        context.expectTrue(snapshot.recent.allSatisfy { !$0.id.hasPrefix("2:") })
+    }
+
+    test("ResetRadarService ignores signals older than thirty days") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 24, 12, in: calendar)
+        let fresh = radarSignal(
+            id: "fresh", sourceId: "a", sourceName: "AI 哨兵记录",
+            title: "今天重置完成", publishedAt: now
+        )
+        let old = radarSignal(
+            id: "old", sourceId: "a", sourceName: "AI 哨兵记录",
+            title: "很久以前的重置", publishedAt: radarDate(2026, 9, 1, 12, in: calendar)
+        )
+        let service = ResetRadarService(
+            sources: [FakeResetSource(id: "a", name: "AI 哨兵记录", signals: [fresh, old])],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.recent.count, 1)
+        context.expectEqual(snapshot.recent.first?.id, "fresh")
+    }
+
+    test("ResetRadarService backs a failed source off and skips it while blocked") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let good = CountingResetSource(id: "a", name: "AI 哨兵记录", signals: [])
+        let bad = CountingResetSource(id: "b", name: "Codex Resets", signals: [], error: HTTPError.status(500))
+        let service = ResetRadarService(sources: [good, bad], http: MockHTTPClient(responses: []), interval: 60)
+        let first = await service.scan(now: now)
+        context.expectEqual(first.sources.first { $0.sourceId == "b" }?.state, .down)
+        context.expectEqual(first.sources.first { $0.sourceId == "b" }?.lastError, "HTTP status 500")
+        context.expectEqual(first.sources.first { $0.sourceId == "b" }?.nextScanAt, now.addingTimeInterval(60))
+        context.expectEqual(bad.fetchCount, 1)
+
+        // The source is blocked for a minute and is not scanned again.
+        let second = await service.scan(now: now.addingTimeInterval(30))
+        context.expectEqual(bad.fetchCount, 1)
+        context.expectEqual(second.sources.first { $0.sourceId == "b" }?.state, .down)
+        context.expectEqual(second.sources.first { $0.sourceId == "b" }?.nextScanAt, now.addingTimeInterval(60))
+
+        // After the backoff the source is scanned again and the backoff grows.
+        let third = await service.scan(now: now.addingTimeInterval(60))
+        context.expectEqual(bad.fetchCount, 2)
+        context.expectEqual(third.sources.first { $0.sourceId == "b" }?.nextScanAt, now.addingTimeInterval(60 + 120))
+        context.expectEqual(good.fetchCount, 3)
+        context.expectEqual(third.sources.first { $0.sourceId == "a" }?.state, .ok)
+    }
+
+    test("ResetRadarService keeps a slow source from stalling the others") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let slow = SlowResetSource(id: "slow", name: "Codex Resets", delay: 5)
+        let fast = FakeResetSource(id: "fast", name: "AI 哨兵记录", signals: [])
+        let service = ResetRadarService(
+            sources: [slow, fast], http: MockHTTPClient(responses: []), interval: 60, sourceTimeout: 0.2
+        )
+        let started = Date()
+        let snapshot = await service.scan(now: now)
+        let elapsed = Date().timeIntervalSince(started)
+        context.expectTrue(elapsed < 2, "the scan waited for the slow source")
+        context.expectEqual(snapshot.sources.first { $0.sourceId == "slow" }?.state, .down)
+        context.expectEqual(snapshot.sources.first { $0.sourceId == "fast" }?.state, .ok)
+        context.expectEqual(snapshot.sourcesAvailable, 1)
+    }
+
+    test("ResetRadarService marks a source with a degraded status degraded") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let status = ResetSignal(
+            id: "codex-resets:status:none:degraded", sourceId: "codex-resets", sourceName: "Codex Resets",
+            kind: .status, severity: "degraded", title: "Codex Resets 服务状态：Degraded",
+            summary: "", publishedAt: now, url: nil, verified: false, scope: "所有用户",
+            confirmingSources: ["Codex Resets"]
+        )
+        let service = ResetRadarService(
+            sources: [FakeResetSource(id: "codex-resets", name: "Codex Resets", signals: [status])],
+            http: MockHTTPClient(responses: []), interval: 60
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.sources.first { $0.sourceId == "codex-resets" }?.state, .degraded)
+        context.expectEqual(snapshot.sourcesAvailable, 1)
+        context.expectEqual(snapshot.latestConfirmed, nil)
+    }
+
+    test("ResetRadarService reports the last scan and the next one") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let source = FakeResetSource(id: "a", name: "AI 哨兵记录", signals: [])
+        let service = ResetRadarService(sources: [source], http: MockHTTPClient(responses: []), interval: 60)
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.lastScanAt, now)
+        context.expectEqual(snapshot.nextScanAt, now.addingTimeInterval(60))
+        context.expectEqual(snapshot.sources.first { $0.sourceId == "a" }?.lastSuccessAt, now)
+    }
+
+    test("ResetRadarService raises a strong signal only for a verified reset") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 18, 12, in: calendar)
+        let strong = radarSignal(
+            id: "strong", sourceId: "a", sourceName: "AI 哨兵记录",
+            title: "第 13 天额度重置完成", publishedAt: now, severity: "strong"
+        )
+        let service = ResetRadarService(
+            sources: [FakeResetSource(id: "a", name: "AI 哨兵记录", signals: [strong])],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestStrong?.id, "strong")
+        context.expectEqual(snapshot.latestStrong?.isStrongNotificationCandidate, true)
+        // A reset that the source did not verify never raises a strong signal.
+        let unverified = radarSignal(
+            id: "unverified", sourceId: "a", sourceName: "AI 哨兵记录",
+            title: "第 13 天额度重置完成", publishedAt: now, severity: "strong", verified: false
+        )
+        let quiet = ResetRadarService(
+            sources: [FakeResetSource(id: "a", name: "AI 哨兵记录", signals: [unverified])],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let quietSnapshot = await quiet.scan(now: now)
+        context.expectEqual(quietSnapshot.latestStrong, nil)
+        context.expectEqual(quietSnapshot.recent.first?.kind, .reset)
+    }
+
+    test("ResetRadarService reuses the cached snapshot until the next scan") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let source = CountingResetSource(id: "a", name: "AI 哨兵记录", signals: [])
+        let service = ResetRadarService(sources: [source], http: MockHTTPClient(responses: []), interval: 60)
+        _ = await service.scan(now: now)
+        let cached = await service.radarSnapshot(now: now.addingTimeInterval(30))
+        context.expectEqual(source.fetchCount, 1)
+        context.expectEqual(cached.lastScanAt, now)
+        let due = await service.radarSnapshot(now: now.addingTimeInterval(60))
+        context.expectEqual(source.fetchCount, 2)
+        context.expectEqual(due.lastScanAt, now.addingTimeInterval(60))
+    }
+
+    test("CodexResetsSource reports a degraded status when the status endpoint fails") { context in
+        let feed = #"{"fetched_at":"2026-10-24T12:00:00Z","tweets":[]}"#
+        let http = MockHTTPClient(responses: [
+            HTTPResponse(data: feed.data(using: .utf8)!, statusCode: 200),
+            HTTPResponse(data: Data(), statusCode: 500),
+        ])
+        let source = CodexResetsSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectTrue(signals.contains { $0.kind == .status && $0.severity == "degraded" })
+    }
+
+    test("Reset sources keep the hash of their raw payload") { context in
+        let json = #"{"monitored_at":"2026-10-24T12:00:00+08:00","completion_observation":{"status":"completed","confirmation_level":"confirmed","occurred_on":"2026-10-24"}}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200))
+        let source = CodexRadarCurrentSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(signals.first?.rawHash, PayloadHash.short(json.data(using: .utf8)!))
+    }
+}
+
+/// A source that always returns the same signals.
+struct FakeResetSource: ResetSource {
+    let id: String
+    let displayName: String
+    let signals: [ResetSignal]
+
+    init(id: String, name: String, signals: [ResetSignal] = []) {
+        self.id = id
+        self.displayName = name
+        self.signals = signals
+    }
+
+    func fetch(using http: HTTPClient, now: Date) async throws -> [ResetSignal] { signals }
+}
+
+/// A source that always fails.
+struct FailingResetSource: ResetSource {
+    let id: String
+    let displayName: String
+
+    init(id: String, name: String) {
+        self.id = id
+        self.displayName = name
+    }
+
+    func fetch(using http: HTTPClient, now: Date) async throws -> [ResetSignal] { throw HTTPError.status(500) }
+}
+
+/// A source that counts its fetches and can fail.
+final class CountingResetSource: ResetSource, @unchecked Sendable {
+    let id: String
+    let displayName: String
+    let signals: [ResetSignal]
+    let error: Error?
+
+    private let lock = NSLock()
+    private var calls = 0
+
+    init(id: String, name: String, signals: [ResetSignal] = [], error: Error? = nil) {
+        self.id = id
+        self.displayName = name
+        self.signals = signals
+        self.error = error
+    }
+
+    var fetchCount: Int {
+        lock.withLock { calls }
+    }
+
+    func fetch(using http: HTTPClient, now: Date) async throws -> [ResetSignal] {
+        lock.withLock { calls += 1 }
+        if let error { throw error }
+        return signals
+    }
+}
+
+/// A source that answers only after a delay.
+struct SlowResetSource: ResetSource {
+    let id: String
+    let displayName: String
+    let delay: TimeInterval
+
+    init(id: String, name: String, delay: TimeInterval) {
+        self.id = id
+        self.displayName = name
+        self.delay = delay
+    }
+
+    func fetch(using http: HTTPClient, now: Date) async throws -> [ResetSignal] {
+        try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        return []
+    }
+}
+
+/// Builds one reset signal of the given source.
+func radarSignal(
+    id: String,
+    sourceId: String,
+    sourceName: String,
+    title: String,
+    publishedAt: Date,
+    kind: ResetSignalKind = .reset,
+    severity: String? = nil,
+    verified: Bool = true
+) -> ResetSignal {
+    ResetSignal(
+        id: id,
+        sourceId: sourceId,
+        sourceName: sourceName,
+        kind: kind,
+        severity: severity,
+        title: title,
+        summary: "",
+        publishedAt: publishedAt,
+        url: nil,
+        verified: verified,
+        scope: "所有付费用户",
+        confirmingSources: [sourceName]
+    )
+}
+
+/// A Gregorian calendar pinned to the given time zone.
+func radarCalendar(_ identifier: String = "UTC") -> Calendar {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: identifier)!
+    return calendar
+}
+
+/// The instant of the given day and hour in the given calendar.
+func radarDate(_ year: Int, _ month: Int, _ day: Int, _ hour: Int = 12, in calendar: Calendar) -> Date {
+    var components = DateComponents()
+    components.year = year
+    components.month = month
+    components.day = day
+    components.hour = hour
+    return calendar.date(from: components)!
+}
+
+/// The instant of the day that is the given number of days before the day of `date`.
+func radarDay(_ date: Date, offset: Int, hour: Int = 12, in calendar: Calendar) -> Date {
+    let start = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: date))!
+    return calendar.date(byAdding: .hour, value: hour, to: start)!
 }
 
 /// Builds synthetic completed turns whose degradation severity grows with `severity`.

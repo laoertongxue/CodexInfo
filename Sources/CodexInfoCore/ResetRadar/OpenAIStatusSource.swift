@@ -35,7 +35,8 @@ public struct OpenAIStatusSource: ResetSource {
             url: URL(string: "https://status.openai.com/"),
             verified: false,
             scope: "所有用户",
-            confirmingSources: [displayName]
+            confirmingSources: [displayName],
+            rawHash: PayloadHash.short(response.data)
         )]
     }
 }

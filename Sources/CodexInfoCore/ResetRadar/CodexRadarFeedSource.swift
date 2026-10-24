@@ -48,7 +48,8 @@ public struct CodexRadarFeedSource: ResetSource {
                 url: url,
                 verified: verified,
                 scope: scope,
-                confirmingSources: [displayName]
+                confirmingSources: [displayName],
+                rawHash: PayloadHash.short(response.data)
             )
         }
     }

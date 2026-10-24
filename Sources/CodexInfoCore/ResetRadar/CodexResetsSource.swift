@@ -34,7 +34,8 @@ public struct CodexResetsSource: ResetSource {
                 title: summary, summary: summary,
                 publishedAt: DateParsing.iso8601(signal["at"] as? String),
                 url: (signal["url"] as? String).flatMap(URL.init(string:)),
-                verified: false, scope: "Codex 用户", confirmingSources: [displayName]
+                verified: false, scope: "Codex 用户", confirmingSources: [displayName],
+                rawHash: PayloadHash.short(feedResponse.data)
             ))
         }
         for tweet in root["tweets"] as? [[String: Any]] ?? [] {
@@ -51,13 +52,14 @@ public struct CodexResetsSource: ResetSource {
                 summary: text,
                 publishedAt: DateParsing.iso8601(tweet["at"] as? String),
                 url: (tweet["url"] as? String).flatMap(URL.init(string:)),
-                verified: verified, scope: "Codex 用户", confirmingSources: [displayName]
+                verified: verified, scope: "Codex 用户", confirmingSources: [displayName],
+                rawHash: PayloadHash.short(feedResponse.data)
             ))
         }
 
         // The status endpoint only reports the service health. Its failure
         // degrades the source but must not take the whole source down, so the
-        // error is swallowed here.
+        // error is swallowed here and published as a degraded status.
         var statusRequest = URLRequest(url: URL(string: "https://codex-reset.com/api/status")!)
         statusRequest.httpMethod = "GET"
         statusRequest.timeoutInterval = 10
@@ -77,7 +79,20 @@ public struct CodexResetsSource: ResetSource {
                 summary: description,
                 publishedAt: DateParsing.iso8601(status["checked_at"] as? String) ?? now,
                 url: URL(string: "https://codex-reset.com/"),
-                verified: false, scope: "所有用户", confirmingSources: [displayName]
+                verified: false, scope: "所有用户", confirmingSources: [displayName],
+                rawHash: PayloadHash.short(statusResponse.data)
+            ))
+        } else {
+            signals.append(ResetSignal(
+                id: "\(id):status:unavailable",
+                sourceId: id, sourceName: displayName, kind: .status,
+                severity: "degraded",
+                title: "Codex Resets 服务状态不可用",
+                summary: "/api/status 没有返回可读的服务状态",
+                publishedAt: now,
+                url: URL(string: "https://codex-reset.com/"),
+                verified: false, scope: "所有用户", confirmingSources: [displayName],
+                rawHash: nil
             ))
         }
         return signals

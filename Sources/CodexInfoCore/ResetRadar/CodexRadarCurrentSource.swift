@@ -48,7 +48,8 @@ public struct CodexRadarCurrentSource: ResetSource {
             url: urlString.flatMap(URL.init(string:)),
             verified: true,
             scope: scope,
-            confirmingSources: [displayName]
+            confirmingSources: [displayName],
+            rawHash: PayloadHash.short(response.data)
         )]
     }
 
