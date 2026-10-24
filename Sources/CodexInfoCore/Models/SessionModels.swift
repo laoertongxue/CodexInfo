@@ -27,11 +27,25 @@ public struct TokenUsageRecordEvent: Equatable, Sendable {
     public let usage: TokenUsage
     public let turnTokenUsage: TokenUsage
     public let threadTokenUsage: TokenUsage
+
+    public init(timestamp: Date?, turnId: String, responseId: String, usage: TokenUsage, turnTokenUsage: TokenUsage, threadTokenUsage: TokenUsage) {
+        self.timestamp = timestamp
+        self.turnId = turnId
+        self.responseId = responseId
+        self.usage = usage
+        self.turnTokenUsage = turnTokenUsage
+        self.threadTokenUsage = threadTokenUsage
+    }
 }
 
 public struct TaskStartedEvent: Equatable, Sendable {
     public let turnId: String
     public let startedAt: Date?
+
+    public init(turnId: String, startedAt: Date?) {
+        self.turnId = turnId
+        self.startedAt = startedAt
+    }
 }
 
 public struct TaskCompleteEvent: Equatable, Sendable {
@@ -39,6 +53,13 @@ public struct TaskCompleteEvent: Equatable, Sendable {
     public let durationMs: Double?
     public let ttftMs: Double?
     public let completedAt: Date?
+
+    public init(turnId: String, durationMs: Double?, ttftMs: Double?, completedAt: Date?) {
+        self.turnId = turnId
+        self.durationMs = durationMs
+        self.ttftMs = ttftMs
+        self.completedAt = completedAt
+    }
 }
 
 public struct TokenCountEvent: Equatable, Sendable {
@@ -46,6 +67,13 @@ public struct TokenCountEvent: Equatable, Sendable {
     public let totalUsage: TokenUsage?
     public let modelContextWindow: Int?
     public let rateLimits: RateLimitSnapshot?
+
+    public init(lastUsage: TokenUsage?, totalUsage: TokenUsage?, modelContextWindow: Int?, rateLimits: RateLimitSnapshot?) {
+        self.lastUsage = lastUsage
+        self.totalUsage = totalUsage
+        self.modelContextWindow = modelContextWindow
+        self.rateLimits = rateLimits
+    }
 }
 
 public struct ItemCompletedEvent: Equatable, Sendable {
@@ -53,6 +81,13 @@ public struct ItemCompletedEvent: Equatable, Sendable {
     public let itemType: String
     public let startedAtMs: Double?
     public let completedAtMs: Double?
+
+    public init(turnId: String, itemType: String, startedAtMs: Double?, completedAtMs: Double?) {
+        self.turnId = turnId
+        self.itemType = itemType
+        self.startedAtMs = startedAtMs
+        self.completedAtMs = completedAtMs
+    }
 }
 
 public struct TurnContextEvent: Equatable, Sendable {
@@ -60,6 +95,13 @@ public struct TurnContextEvent: Equatable, Sendable {
     public let model: String?
     public let reasoningEffort: String?
     public let compHash: String?
+
+    public init(turnId: String, model: String?, reasoningEffort: String?, compHash: String?) {
+        self.turnId = turnId
+        self.model = model
+        self.reasoningEffort = reasoningEffort
+        self.compHash = compHash
+    }
 }
 
 public struct ThreadSettingsEvent: Equatable, Sendable {
@@ -67,6 +109,13 @@ public struct ThreadSettingsEvent: Equatable, Sendable {
     public let reasoningEffort: String?
     public let serviceTier: String?
     public let provider: String?
+
+    public init(model: String?, reasoningEffort: String?, serviceTier: String?, provider: String?) {
+        self.model = model
+        self.reasoningEffort = reasoningEffort
+        self.serviceTier = serviceTier
+        self.provider = provider
+    }
 }
 
 public enum SessionEvent: Equatable, Sendable {

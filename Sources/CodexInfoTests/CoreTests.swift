@@ -186,6 +186,95 @@ func registerCoreTests() {
         let line = #"{"timestamp":"2026-10-24T02:48:22.880Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"Text","text":"secret"}]}}"#
         context.expectEqual(SessionLogParser.parse(line: Data(line.utf8)), nil)
     }
+
+    test("SessionLogParser event models accept public initializers") { context in
+        let events: [SessionEvent] = [
+            .threadSettings(ThreadSettingsEvent(model: "gpt-6.1-sol", reasoningEffort: "xhigh", serviceTier: "default", provider: "openai")),
+            .turnContext(TurnContextEvent(turnId: "turn-1", model: "gpt-6.1-sol", reasoningEffort: "xhigh", compHash: "3000")),
+            .taskStarted(TaskStartedEvent(turnId: "turn-1", startedAt: Date(timeIntervalSince1970: 100))),
+            .tokenUsageRecord(TokenUsageRecordEvent(timestamp: nil, turnId: "turn-1", responseId: "resp-1", usage: .zero, turnTokenUsage: .zero, threadTokenUsage: .zero)),
+            .taskComplete(TaskCompleteEvent(turnId: "turn-1", durationMs: 5_000, ttftMs: 500, completedAt: Date(timeIntervalSince1970: 105))),
+            .tokenCount(TokenCountEvent(lastUsage: nil, totalUsage: nil, modelContextWindow: nil, rateLimits: nil)),
+            .itemCompleted(ItemCompletedEvent(turnId: "turn-1", itemType: "Reasoning", startedAtMs: 1_000, completedAtMs: 2_000)),
+            .compacted,
+        ]
+        context.expectEqual(events.count, 8)
+    }
+
+    test("SessionLogParser reads turn context token count and compaction") { context in
+        let contextLine = #"{"timestamp":"2026-10-24T02:48:18.000Z","type":"turn_context","payload":{"turn_id":"turn-1","model":"gpt-6.1-sol","effort":"xhigh","comp_hash":"3000"}}"#
+        guard case .turnContext(let turn)? = SessionLogParser.parse(line: Data(contextLine.utf8)) else {
+            context.fail("expected turnContext")
+            return
+        }
+        context.expectEqual(turn.turnId, "turn-1")
+        context.expectEqual(turn.model, "gpt-6.1-sol")
+        context.expectEqual(turn.reasoningEffort, "xhigh")
+        context.expectEqual(turn.compHash, "3000")
+
+        let countLine = #"{"timestamp":"2026-10-24T02:48:22.880Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":5,"cache_write_input_tokens":1,"output_tokens":7,"reasoning_output_tokens":2,"total_tokens":20},"total_token_usage":{"input_tokens":100,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":150},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":16,"window_minutes":10080,"resets_at":200},"secondary":{"used_percent":5,"window_minutes":300,"resets_at":100},"plan_type":"pro"}}}"#
+        guard case .tokenCount(let count)? = SessionLogParser.parse(line: Data(countLine.utf8)) else {
+            context.fail("expected tokenCount")
+            return
+        }
+        context.expectEqual(count.lastUsage?.outputTokens, 7)
+        context.expectEqual(count.totalUsage?.outputTokens, 50)
+        context.expectEqual(count.modelContextWindow, 258_400)
+        context.expectEqual(count.rateLimits?.limitId, "codex")
+        context.expectEqual(count.rateLimits?.planType, "pro")
+        context.expectEqual(count.rateLimits?.primary?.usedPercent, 16)
+        context.expectEqual(count.rateLimits?.primary?.windowDurationMins, 10_080)
+        context.expectEqual(count.rateLimits?.primary?.resetsAt, 200)
+        context.expectEqual(count.rateLimits?.secondary?.windowDurationMins, 300)
+
+        let compactedLine = #"{"timestamp":"2026-10-24T02:50:00.000Z","type":"compacted","payload":{}}"#
+        context.expectEqual(SessionLogParser.parse(line: Data(compactedLine.utf8)), SessionEvent.compacted)
+
+        let unknownLine = #"{"timestamp":"2026-10-24T02:50:00.000Z","type":"event_msg","payload":{"type":"agent_reasoning"}}"#
+        context.expectEqual(SessionLogParser.parse(line: Data(unknownLine.utf8)), nil)
+    }
+
+    test("SessionLogParser keeps missing optional values nil") { context in
+        let countLine = #"{"timestamp":"2026-10-24T02:48:22.880Z","type":"event_msg","payload":{"type":"token_count","info":{"model_context_window":null},"rate_limits":{"limit_id":"codex","primary":{"used_percent":16,"window_minutes":10080},"secondary":null,"plan_type":"pro"}}}"#
+        guard case .tokenCount(let count)? = SessionLogParser.parse(line: Data(countLine.utf8)) else {
+            context.fail("expected tokenCount")
+            return
+        }
+        context.expectEqual(count.lastUsage, nil)
+        context.expectEqual(count.totalUsage, nil)
+        context.expectEqual(count.modelContextWindow, nil)
+        context.expectEqual(count.rateLimits?.primary?.resetsAt, nil)
+        context.expectEqual(count.rateLimits?.primary?.usedPercent, 16)
+    }
+
+    test("SessionLogParser keeps present empty usage objects as zero") { context in
+        let line = #"{"timestamp":"2026-10-24T02:48:22.880Z","type":"token_usage_record","payload":{"turn_id":"turn-1","response_id":"resp-1","usage":{},"turn_token_usage":{},"thread_token_usage":{}}}"#
+        guard case .tokenUsageRecord(let record)? = SessionLogParser.parse(line: Data(line.utf8)) else {
+            context.fail("expected tokenUsageRecord")
+            return
+        }
+        context.expectEqual(record.usage, TokenUsage.zero)
+        context.expectEqual(record.turnTokenUsage, TokenUsage.zero)
+        context.expectEqual(record.threadTokenUsage, TokenUsage.zero)
+    }
+
+    test("SessionLogParser rejects structurally incomplete events") { context in
+        let lines = [
+            #"{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}"#,
+            #"{"type":"token_usage_record","payload":{"turn_id":"turn-1","response_id":"resp-1","usage":{}}}"#,
+            #"{"type":"token_usage_record","payload":{"turn_id":"turn-1","usage":{},"turn_token_usage":{},"thread_token_usage":{}}}"#,
+            #"{"type":"event_msg","payload":{"type":"task_started"}}"#,
+            #"{"type":"event_msg","payload":{"type":"task_complete"}}"#,
+            #"{"type":"event_msg","payload":{"type":"item_completed","turn_id":"turn-1"}}"#,
+            #"{"type":"event_msg","payload":{"type":"item_completed","turn_id":"turn-1","item":{}}}"#,
+            #"{"type":"event_msg","payload":{"type":"thread_settings_applied"}}"#,
+            #"{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{}}}"#,
+            #"{"type":"event_msg","payload":{"type":"token_count"}}"#,
+        ]
+        for line in lines {
+            context.expectEqual(SessionLogParser.parse(line: Data(line.utf8)), nil, line)
+        }
+    }
 }
 
 final class MockHTTPClient: HTTPClient, @unchecked Sendable {
