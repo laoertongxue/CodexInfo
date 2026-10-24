@@ -1199,20 +1199,26 @@ func registerCoreTests() {
     test("CodexRadarFeedSource keeps an announcement verifying and a closed window a reset") { context in
         let xml = """
         <rss><channel>
-        <item><title>Day 19：新一轮重置预告</title><guid>p</guid><pubDate>Sat, 24 Oct 2026 04:46:19 GMT</pubDate><description><![CDATA[速蹬窗口开启。\n适用范围：Codex 用户]]></description></item>
-        <item><title>速蹬窗口关闭</title><guid>c</guid><pubDate>Sat, 24 Oct 2026 08:46:19 GMT</pubDate><description><![CDATA[Tibo 表示重置已全部传播完成。\n适用范围：Codex 用户]]></description></item>
+        <item><title>速蹬窗口开启：500 万用户庆祝重置</title><guid>p</guid><pubDate>Sat, 24 Oct 2026 04:46:19 GMT</pubDate><description><![CDATA[当前动作：尽快使用剩余额度，等待后续窗口关闭信号。\n适用范围：所有付费计划]]></description></item>
+        <item><title>速蹬窗口关闭：Codex 与 ChatGPT Work 用量限制重置</title><guid>c</guid><pubDate>Sat, 24 Oct 2026 08:46:19 GMT</pubDate><description><![CDATA[Tibo 表示重置已全部传播完成。\n适用范围：所有付费计划]]></description></item>
+        <item><title>Day 10 重置已预告 · 尚未确认完成</title><guid>u</guid><pubDate>Sat, 24 Oct 2026 02:46:19 GMT</pubDate><description><![CDATA[这是官方预告，尚未确认完成，不增加已完成重置次数。]]></description></item>
+        <item><title>权益记录：Codex 用量限制已重置</title><guid>r</guid><pubDate>Sat, 24 Oct 2026 01:46:19 GMT</pubDate><description><![CDATA[确认依据：用户确认已到账。]]></description></item>
         </channel></rss>
         """
         let http = MockHTTPClient(response: HTTPResponse(data: xml.data(using: .utf8)!, statusCode: 200))
         let source = CodexRadarFeedSource()
         let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
-        context.expectEqual(signals.count, 2)
-        let preview = signals.first { $0.title.contains("预告") }
-        let closed = signals.first { $0.title.contains("关闭") }
+        context.expectEqual(signals.count, 4)
+        let opening = signals.first { $0.title.contains("窗口开启") }
+        let closing = signals.first { $0.title.contains("窗口关闭") }
+        let preview = signals.first { $0.title.contains("尚未确认完成") }
+        let record = signals.first { $0.title.contains("已重置") }
+        context.expectEqual(opening?.kind, .verifying)
+        context.expectEqual(opening?.verified, false)
+        context.expectEqual(closing?.kind, .reset)
+        context.expectEqual(closing?.verified, false)
         context.expectEqual(preview?.kind, .verifying)
-        context.expectEqual(preview?.verified, false)
-        context.expectEqual(closed?.kind, .reset)
-        context.expectEqual(closed?.verified, false)
+        context.expectEqual(record?.kind, .reset)
     }
 
     test("CodexResetsSource keeps an unconfirmed claim verifying and never fabricates a strong severity") { context in

@@ -33,7 +33,7 @@ public struct CodexRadarFeedSource: ResetSource {
             // window. A closed window is a completed reset, an open or
             // previewed one is still `verifying`. `verified` stays false
             // unless the item confirms the reset itself.
-            let kind: ResetSignalKind = (verified || Self.isCompletion(title: title, description: description)) ? .reset : .verifying
+            let kind: ResetSignalKind = (verified || Self.isCompletion(title: title)) ? .reset : .verifying
             let scope = Self.scope(in: description)
             let url = Self.linkURL(itemLink: item["link"], description: description)
             return ResetSignal(
@@ -53,13 +53,17 @@ public struct CodexRadarFeedSource: ResetSource {
         }
     }
 
-    /// The item reports that the window closed and the reset landed.
+    /// The item title reports that the reset landed.
     ///
-    /// The feed uses the word 窗口 for an opening and for a closing, so the
-    /// closing wording is checked first.
-    static func isCompletion(title: String, description: String) -> Bool {
-        let text = title + "\n" + description
-        for phrase in ["窗口关闭", "已全部传播完成", "已完成", "已恢复", "恢复到 100%"] where text.contains(phrase) {
+    /// The feed uses 窗口 for an opening and for a closing, and the body of an
+    /// announcement mentions the future closing ("等待后续窗口关闭信号"), so
+    /// only the title decides. A preview marker always wins: an announced but
+    /// unfinished window stays `verifying`.
+    static func isCompletion(title: String) -> Bool {
+        for marker in ["预告", "尚未确认", "开启", "预计"] where title.contains(marker) {
+            return false
+        }
+        for phrase in ["窗口关闭", "已完成", "已重置", "官方权益确认"] where title.contains(phrase) {
             return true
         }
         return false
