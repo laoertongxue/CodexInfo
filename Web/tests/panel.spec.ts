@@ -79,6 +79,39 @@ test("the radar counts the sources that are not down", async ({ page }) => {
   await expect(page.getByTestId("source-availability")).toHaveText("3/4 来源可用");
 });
 
+test("the reset panel states this account's previous and next reset in Beijing time", async ({ page }) => {
+  await page.goto("/");
+  const window = page.getByTestId("quota-reset-window");
+  await expect(window).toContainText("你的周额度窗口");
+  await expect(window).toContainText("上次重置");
+  await expect(window).toContainText("下次重置");
+  await expect(window).toContainText("北京时间");
+  await expect(page.getByTestId("next-reset-at")).toContainText("北京时间");
+  await expect(page.getByTestId("quota")).toContainText("北京时间");
+});
+
+test("a reset from a single source is surfaced instead of hidden", async ({ page }) => {
+  await page.goto("/?fixture=single-source-reset");
+  const radar = page.getByTestId("reset-radar");
+  await expect(radar).toContainText("Day 20 重置完成");
+  await expect(radar).toContainText("单一来源");
+  await expect(radar).not.toContainText("来源已确认");
+});
+
+test("a forecast is shown with its source and Beijing time", async ({ page }) => {
+  await page.goto("/");
+  const forecast = page.getByTestId("reset-forecast");
+  await expect(forecast).toContainText("By midnight PST");
+  await expect(forecast).toContainText("Codex Resets");
+  await expect(forecast).toContainText("北京时间");
+});
+
+test("a weekly reset five minutes ago is marked as just reset", async ({ page }) => {
+  await page.goto("/?fixture=just-reset");
+  await expect(page.getByTestId("just-reset")).toHaveText("刚刚重置");
+  await expect(page.getByTestId("quota-reset-window")).toContainText("本机周额度刚刚重置");
+});
+
 test("a normal verdict keeps the evidence collapsed but shows the disclaimer", async ({ page }) => {
   await page.goto("/");
   const health = page.getByTestId("model-health");

@@ -50,7 +50,8 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
     ///   - settings: the settings of the app.
     ///   - now: the moment the expiry of the credits is measured from.
     func evaluate(snapshot: UsageSnapshot, settings: AppSettings, now: Date = Date()) {
-        let sent = Set(defaults.stringArray(forKey: Self.sentKey) ?? [])
+        let existing = defaults.stringArray(forKey: Self.sentKey) ?? []
+        let sent = Set(existing)
         let plan = NotificationEventEvaluator.plan(
             snapshot: snapshot,
             notificationsEnabled: settings.notificationsEnabled,
@@ -58,8 +59,11 @@ final class NotificationController: NSObject, UNUserNotificationCenterDelegate {
             sentKeys: sent
         )
         // The keys are remembered even when the notifications are off, so that
-        // enabling them later does not raise a burst of old events.
-        defaults.set(plan.nextSentKeys.sorted(), forKey: Self.sentKey)
+        // enabling them later does not raise a burst of old events. Keep them
+        // in insertion order and drop the oldest, never a recent key.
+        let fresh = plan.nextSentKeys.subtracting(sent)
+        let remembered = NotificationKeyHistory.appended(existing, fresh: fresh)
+        defaults.set(remembered, forKey: Self.sentKey)
         guard !plan.events.isEmpty else { return }
         for event in plan.events {
             let content = UNMutableNotificationContent()

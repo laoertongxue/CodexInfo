@@ -2,7 +2,7 @@ import Foundation
 
 public enum AppConstants {
     public static let appName = "CodexInfo"
-    public static let version = "0.1.0"
+    public static let version = "0.1.1"
     public static let bundleIdentifier = "com.laoer.codexinfo"
     public static let supportDirectoryName = "CodexInfo"
     public static let codexHomeEnvironmentKey = "CODEX_HOME"
@@ -17,5 +17,5 @@ public enum AppConstants {
     /// request must not stall the panel or the badge forever.
     public static let clientUsageTimeoutSeconds: TimeInterval = 10
     public static let staleSeconds: TimeInterval = 300
-    public static let userAgent = "CodexInfo/0.1.0"
+    public static let userAgent = "CodexInfo/\(version)"
 }

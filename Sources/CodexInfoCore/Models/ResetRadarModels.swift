@@ -51,6 +51,12 @@ public struct ResetRadarSnapshot: Codable, Equatable, Sendable {
     public let sources: [SourceHealth]
     /// The newest group that two reset sources confirmed.
     public let latestConfirmed: ResetSignal?
+    /// The newest group that carries a reset record, even when only one
+    /// source published it.
+    public let latestReset: ResetSignal?
+    /// The newest forecast or announcement, even when it was merged into a
+    /// reset group or only one source published it.
+    public let latestForecast: ResetSignal?
     /// The recent groups, newest first.
     public let recent: [ResetSignal]
     /// The moment of the last scan.
@@ -61,12 +67,16 @@ public struct ResetRadarSnapshot: Codable, Equatable, Sendable {
     public init(
         sources: [SourceHealth],
         latestConfirmed: ResetSignal?,
+        latestReset: ResetSignal? = nil,
+        latestForecast: ResetSignal? = nil,
         recent: [ResetSignal],
         lastScanAt: Date?,
         nextScanAt: Date?
     ) {
         self.sources = sources
         self.latestConfirmed = latestConfirmed
+        self.latestReset = latestReset
+        self.latestForecast = latestForecast
         self.recent = recent
         self.lastScanAt = lastScanAt
         self.nextScanAt = nextScanAt
@@ -87,7 +97,12 @@ public struct ResetRadarSnapshot: Codable, Equatable, Sendable {
     /// Only a `reset` signal that is verified and carries the `strong`
     /// severity qualifies; a plain `kind == .reset` never does.
     public var latestStrong: ResetSignal? {
-        recent.first { $0.isStrongNotificationCandidate }
+        // The display list is capped; a strong reset that fell out of it must
+        // still raise its notification.
+        if let latestReset, latestReset.isStrongNotificationCandidate {
+            return latestReset
+        }
+        return recent.first { $0.isStrongNotificationCandidate }
     }
 
     /// The snapshot of a radar that was never scanned.

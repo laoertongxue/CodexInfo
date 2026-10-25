@@ -35,7 +35,8 @@ public actor QuotaService: QuotaSnapshotProviding {
                     weeklyRemainingPercent: weekly.remainingPercent,
                     weeklyResetsAt: weekly.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
                     source: .official,
-                    fetchedAt: now
+                    fetchedAt: now,
+                    weeklyWindowMinutes: weekly.windowDurationMins
                 )
             }
             // A response without a weekly window carries no quota, so the
@@ -61,12 +62,28 @@ public actor QuotaService: QuotaSnapshotProviding {
                 weeklyResetsAt: fallbackSnapshot.weeklyResetsAt,
                 source: fallbackSnapshot.source,
                 fetchedAt: fallbackSnapshot.fetchedAt,
-                authExpired: authExpired
+                authExpired: authExpired,
+                weeklyWindowMinutes: fallbackSnapshot.weeklyWindowMinutes
             )
             cache = snapshot
             cachedAt = now
             return snapshot
         }
-        return cache
+        if let cache {
+            // The current attempt may have found an expired login while the
+            // old value is still usable. Keep the value, but do not hide the
+            // expiry from the panel.
+            return QuotaSnapshot(
+                planType: cache.planType,
+                weeklyRemainingPercent: cache.weeklyRemainingPercent,
+                weeklyResetsAt: cache.weeklyResetsAt,
+                source: cache.source,
+                fetchedAt: cache.fetchedAt,
+                authExpired: authExpired,
+                weeklyWindowMinutes: cache.weeklyWindowMinutes,
+                weeklyWindowStartedAt: cache.weeklyWindowStartedAt
+            )
+        }
+        return nil
     }
 }

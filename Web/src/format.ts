@@ -11,15 +11,31 @@ export function formatRate(value?: number | null): string {
   return value == null ? "—" : `${value.toFixed(1)} tok/s`;
 }
 
-export function formatDateTime(value?: string | null): string {
-  if (!value) return "—";
+export function formatDateTime(value?: string | number | null): string {
+  if (value == null) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
   return date.toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-export function formatRemaining(value?: string | null, now = Date.now()): string {
-  if (!value) return "—";
+/** The same moment in Beijing time; reset times are stated in UTC+8. */
+export function formatBeijingDateTime(value?: string | number | null): string {
+  if (value == null) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+}
+
+export function formatRemaining(value?: string | number | null, now = Date.now()): string {
+  if (value == null) return "—";
   const target = new Date(value).getTime();
   if (Number.isNaN(target)) return "—";
   const minutes = Math.max(0, Math.round((target - now) / 60_000));

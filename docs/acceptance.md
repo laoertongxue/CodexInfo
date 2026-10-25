@@ -63,7 +63,7 @@ Expected:
 - `codesign` prints `signed` (the bundle is signed ad-hoc).
 - `PlistBuddy` prints the `codexinfo` scheme. The bundle also carries
   `LSUIElement` (accessory app, no Dock icon), `CFBundleIdentifier`
-  `com.laoer.codexinfo`, `CFBundleShortVersionString` `0.1.0` and
+  `com.laoer.codexinfo`, `CFBundleShortVersionString` `0.1.1` and
   `LSMinimumSystemVersion` `14.0`.
 
 ---
@@ -187,18 +187,22 @@ PY
   are printed, and the disclaimer `基于本机近 7 天基线，不代表官方结论` is
   shown.
 
-### Check 5 — The four reset sources
+### Check 5 — The four reset sources and this account's window
 
-*Spec: 四源 `x/4`，确认记录能打开原始出处；单源失败不拖垮其余源。*
+*Spec: 四源 `x/4`，确认记录能打开原始出处；单源失败不拖垮其余源；本机周额度时间按北京时间显示。*
 
 ```bash
 python3 - <<'PY'
 import json, pathlib
 p = pathlib.Path.home() / "Library/Application Support/CodexInfo/snapshot.json"
-radar = json.loads(p.read_text())["resetRadar"]
+data = json.loads(p.read_text())
+radar = data["resetRadar"]
 for source in radar["sources"]:
     print(source["sourceName"], source["state"], source.get("lastSuccessAt"))
 print("available:", sum(1 for s in radar["sources"] if s["state"] != "down"), "/", len(radar["sources"]))
+print("latest reset:", radar.get("latestReset"))
+print("latest forecast:", radar.get("latestForecast"))
+print("weekly window:", data["quota"].get("weeklyResetsAt"), data["quota"].get("weeklyWindowMinutes"))
 PY
 ```
 
@@ -206,9 +210,17 @@ Expected:
 
 - The panel shows `x/4 来源可用` for the four sources (`AI 哨兵记录`,
   `AI 哨兵信号`, `Codex Resets`, `官方状态`).
+- The reset panel first shows `你的周额度窗口` with the previous and the next
+  reset in Beijing time; within one hour after a reset it shows `刚刚重置`.
+- A reset record from a single source is shown (labelled `单一来源`), not
+  hidden until a second source confirms it.
+- A newer forecast is shown with its source and publish time; the original
+  text is kept because a community message may not state a convertible time.
 - A confirmed record opens its origin (`查看原始出处`).
 - A source that fails shows `源不可用` for that source only; the other three
-  keep their state and the confirmed records stay.
+  keep their state and the records stay.
+- If notifications are enabled in the settings, a weekly window within 15
+  minutes raises one `周额度将在 N 分钟后重置` notification.
 
 ### Check 6 — A missing `auth.json`
 

@@ -76,6 +76,8 @@ public actor ResetRadarService {
     private var signalsBySource: [String: [ResetSignal]] = [:]
     private var lastScanAt: Date?
     private var nextScanAt: Date?
+    /// The scan that is in flight; concurrent callers share it.
+    private var activeScan: Task<ResetRadarSnapshot, Never>?
 
     /// Creates the service.
     ///
@@ -85,30 +87,80 @@ public actor ResetRadarService {
     ///   - interval: the delay between two scans.
     ///   - sourceTimeout: the timeout of one source.
     ///   - calendar: the calendar the occurrence day is read with.
+    ///   - seed: the last published radar snapshot; its records and health
+    ///     are kept until a source reports something newer.
     public init(
         sources: [ResetSource],
         http: HTTPClient,
         interval: TimeInterval = AppConstants.refreshSourcesSeconds,
         sourceTimeout: TimeInterval = ResetRadarService.defaultSourceTimeout,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        seed: ResetRadarSnapshot? = nil
     ) {
         self.sources = sources
         self.http = http
         self.interval = interval
         self.sourceTimeout = sourceTimeout
         self.calendar = calendar
+        if let seed {
+            apply(seed: seed)
+        }
+    }
+
+    /// Restores the records and health of a previous process.
+    ///
+    /// The snapshot only carries grouped records, not the raw per-source
+    /// pages. A group is still a valid record of its representative source,
+    /// and `latestReset/latestForecast` are added when the group pass did not
+    /// carry them.
+    private func apply(seed: ResetRadarSnapshot) {
+        var seen = Set<String>()
+        func add(_ signal: ResetSignal?) {
+            guard let signal, seen.insert(signal.id).inserted else { return }
+            signalsBySource[signal.sourceId, default: []].append(signal)
+        }
+        for signal in seed.recent { add(signal) }
+        add(seed.latestConfirmed)
+        add(seed.latestReset)
+        add(seed.latestForecast)
+        for entry in seed.sources {
+            health[entry.sourceId] = entry
+        }
+        lastScanAt = seed.lastScanAt
+        nextScanAt = seed.nextScanAt
     }
 
     /// The current snapshot; a scan runs when the cached one is due.
     public func radarSnapshot(now: Date = Date()) async -> ResetRadarSnapshot {
-        if let next = nextScanAt, now < next {
+        // A clock rollback makes `nextScanAt` look hours away; a deadline
+        // farther than two intervals is treated as skew, not as a real wait.
+        if let next = nextScanAt, now < next, next.timeIntervalSince(now) <= interval * 2 {
             return makeSnapshot(now: now)
         }
         return await scan(now: now)
     }
 
     /// Scans every source that is not blocked and returns the new snapshot.
+    ///
+    /// Concurrent callers share the same in-flight scan, so a manual scan and
+    /// the periodic refresh cannot race each other or double the backoff.
     public func scan(now: Date = Date()) async -> ResetRadarSnapshot {
+        if let activeScan {
+            return await activeScan.value
+        }
+        let task = Task { await self.performScan(now: now) }
+        activeScan = task
+        let snapshot = await task.value
+        activeScan = nil
+        return snapshot
+    }
+
+    private func performScan(now: Date) async -> ResetRadarSnapshot {
+        // A backward clock jump must not keep a failed source blocked for the
+        // duration of the skew. Retry it with the rest of the sources.
+        if let lastScanAt, now < lastScanAt.addingTimeInterval(-interval) {
+            blockedUntil.removeAll()
+        }
         let http = self.http
         let timeout = self.sourceTimeout
         let due = sources.filter { source in
@@ -122,7 +174,13 @@ public actor ResetRadarService {
             case .success(let signals):
                 failures[source.id] = 0
                 blockedUntil[source.id] = nil
-                signalsBySource[source.id] = signals
+                // A trimmed or empty page is not proof that the record never
+                // happened. Merge by id so the last known reset survives.
+                signalsBySource[source.id] = Self.merged(
+                    signals,
+                    with: signalsBySource[source.id] ?? [],
+                    now: now
+                )
                 health[source.id] = SourceHealth(
                     sourceId: source.id,
                     sourceName: source.displayName,
@@ -151,6 +209,83 @@ public actor ResetRadarService {
         lastScanAt = now
         nextScanAt = now.addingTimeInterval(interval)
         return makeSnapshot(now: now)
+    }
+
+    /// Merges the new page into the records already known for a source.
+    ///
+    /// The feed is a page, not the full history: a successful response with
+    /// fewer rows must not erase a reset seen yesterday. New rows win on an
+    /// id collision; old rows expire after the 30-day window.
+    private static func merged(
+        _ new: [ResetSignal],
+        with old: [ResetSignal],
+        now: Date
+    ) -> [ResetSignal] {
+        var byID: [String: ResetSignal] = [:]
+        for signal in old { byID[signal.id] = signal }
+        for signal in new {
+            if let old = byID[signal.id] {
+                byID[signal.id] = mergedSignal(signal, old: old)
+            } else {
+                byID[signal.id] = signal
+            }
+        }
+        let cutoff = now.addingTimeInterval(-maxSignalAge)
+        let sorted = byID.values
+            .filter { signal in
+                guard let publishedAt = signal.publishedAt else { return true }
+                return publishedAt >= cutoff
+            }
+            .sorted { lhs, rhs in
+                let left = lhs.publishedAt ?? .distantPast
+                let right = rhs.publishedAt ?? .distantPast
+                if left != right { return left > right }
+                return lhs.id < rhs.id
+            }
+        let capped = Array(sorted.prefix(maxSignalsPerSource))
+        // Forecasts are frequent; they must not push the only reset record
+        // out of the per-source cap.
+        if !capped.contains(where: { $0.kind == .reset }),
+           let newestReset = sorted.first(where: { $0.kind == .reset }) {
+            return Array(capped.dropLast()) + [newestReset]
+        }
+        return capped
+    }
+
+    /// Merges a re-published row into the record already known under its id.
+    ///
+    /// A page can return the same raw row that was previously stored as a
+    /// grouped record. The raw row knows only its own source, so replacing the
+    /// group would silently drop the other confirming source. Keep the union
+    /// and never downgrade a completed reset to a forecast.
+    private static func mergedSignal(_ new: ResetSignal, old: ResetSignal) -> ResetSignal {
+        var sources: [String] = []
+        for source in old.confirmingSources + new.confirmingSources where !sources.contains(source) {
+            sources.append(source)
+        }
+        let representative = (old.kind == .reset && new.kind != .reset) ? old : new
+        let kind: ResetSignalKind = (old.kind == .reset || new.kind == .reset) ? .reset : new.kind
+        let severity: String?
+        if old.severity == "strong" || new.severity == "strong" {
+            severity = "strong"
+        } else {
+            severity = new.severity ?? old.severity
+        }
+        return ResetSignal(
+            id: representative.id,
+            sourceId: representative.sourceId,
+            sourceName: representative.sourceName,
+            kind: kind,
+            severity: severity,
+            title: representative.title,
+            summary: representative.summary.isEmpty ? old.summary : representative.summary,
+            publishedAt: representative.publishedAt,
+            url: representative.url ?? old.url,
+            verified: old.verified || new.verified,
+            scope: representative.scope ?? old.scope,
+            confirmingSources: sources,
+            rawHash: representative.rawHash
+        )
     }
 
     // MARK: - Snapshot
@@ -192,12 +327,21 @@ public actor ResetRadarService {
             kept.append(signal)
         }
 
+        let allGroups = Self.group(fresh, calendar: calendar)
         let groups = Self.group(kept, calendar: calendar)
         let recent = Array(groups.prefix(Self.maxSignalsTotal))
-        let confirmed = recent.first { $0.confirmingSources.count >= 2 }
+        // The latest facts are read from the full fresh set, not the display
+        // cap: a capped-out record must still reach the panel and notification.
+        let confirmed = allGroups.first { $0.confirmingSources.count >= 2 }
+        let latestReset = allGroups.first { $0.kind == .reset }
+        // The forecast is read from the ungrouped signals: a forecast of the
+        // same day must not disappear behind the reset record it announces.
+        let latestForecast = fresh.first { $0.kind == .verifying }
         return ResetRadarSnapshot(
             sources: healthEntries(),
             latestConfirmed: confirmed,
+            latestReset: latestReset,
+            latestForecast: latestForecast,
             recent: recent,
             lastScanAt: lastScanAt,
             nextScanAt: nextScanAt
@@ -281,8 +425,21 @@ public actor ResetRadarService {
         calendar: Calendar
     ) -> Bool {
         guard let firstDate = first.publishedAt, let secondDate = second.publishedAt else { return false }
-        if dayIndex(of: first, calendar: calendar) == dayIndex(of: second, calendar: calendar) { return true }
-        return abs(firstDate.timeIntervalSince(secondDate)) <= sameEventWindow
+        if abs(firstDate.timeIntervalSince(secondDate)) <= sameEventWindow { return true }
+        guard dayIndex(of: first, calendar: calendar) == dayIndex(of: second, calendar: calendar) else {
+            return false
+        }
+        // A date-only record lands at midnight and stands for the whole day,
+        // so it may join a timed record of the same day. Two timed records
+        // more than six hours apart are distinct events even on one day.
+        return isDateOnly(firstDate, calendar: calendar)
+            || isDateOnly(secondDate, calendar: calendar)
+    }
+
+    /// Whether the instant is midnight in the calendar of the service.
+    private static func isDateOnly(_ date: Date, calendar: Calendar) -> Bool {
+        let parts = calendar.dateComponents([.hour, .minute, .second], from: date)
+        return parts.hour == 0 && parts.minute == 0 && parts.second == 0
     }
 
     /// Merges the members of one group into a single signal.
@@ -296,7 +453,10 @@ public actor ResetRadarService {
         let resetMembers = members.filter { $0.kind == .reset }
         guard let primary = resetMembers.first ?? members.first else { return members[0] }
         let contributors = orderedResetSources(
-            resetMembers.map { $0.sourceName }.filter { resetSourceNames.contains($0) }
+            resetMembers.flatMap { member in
+                ([member.sourceName] + member.confirmingSources)
+                    .filter { resetSourceNames.contains($0) }
+            }
         )
         let strong = members.contains { $0.isStrongNotificationCandidate }
         return ResetSignal(
@@ -381,7 +541,7 @@ public actor ResetRadarService {
     ) async -> FetchOutcome {
         await withCheckedContinuation { (continuation: CheckedContinuation<FetchOutcome, Never>) in
             let race = TimeoutRace(continuation)
-            Task {
+            let fetchTask = Task {
                 do {
                     let signals = try await source.fetch(using: http, now: now)
                     race.finish(.success(signals))
@@ -391,6 +551,9 @@ public actor ResetRadarService {
             }
             Task {
                 try? await Task.sleep(nanoseconds: UInt64(max(timeout, 0) * 1_000_000_000))
+                // Cancel the request that lost the race; a hung URLSession
+                // task must not outlive the scan that gave up on it.
+                fetchTask.cancel()
                 race.finish(.failure("timed out after \(timeout) s"))
             }
         }

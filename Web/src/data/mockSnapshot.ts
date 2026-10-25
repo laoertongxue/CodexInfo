@@ -9,12 +9,12 @@ import type { UsageSnapshot } from "./types";
 export const mockSnapshot: UsageSnapshot = {
   "generatedAt": "2026-10-24T14:20:39+08:00",
   "freshness": { "quota": "fresh", "session": "fresh", "account": "fresh", "sources": "fresh", "resetCredits": "fresh" },
-  "quota": { "planType": "pro", "weeklyRemainingPercent": 84, "weeklyResetsAt": "2026-10-26T11:03:00+08:00", "source": "official", "fetchedAt": "2026-10-24T14:20:39+08:00" },
+  "quota": { "planType": "pro", "weeklyRemainingPercent": 84, "weeklyResetsAt": "2026-10-26T11:03:00+08:00", "weeklyWindowMinutes": 10080, "weeklyWindowStartedAt": "2026-10-19T11:03:00+08:00", "source": "official", "fetchedAt": "2026-10-24T14:20:39+08:00" },
   "resetCredits": { "availableCount": 1, "reportedAvailableCount": 1, "items": [{ "idSuffix": "123456", "status": "available", "grantedAt": null, "expiresAt": "2026-11-07T07:55:00+08:00", "title": "Full reset" }], "fetchedAt": "2026-10-24T14:20:39+08:00" },
   "session": { "isActive": true, "label": "当前会话", "model": "gpt-6.1-sol", "effort": "xhigh", "serviceTier": "default", "contextTokens": 147000, "contextWindow": 475000, "totalTokens": 1240000, "inputTokens": 1180000, "outputTokens": 58300, "cachedInputTokens": 1020000, "reasoningOutputTokens": 7000, "outputTokensPerSecond": 42.3, "medianOutputTokensPerSecond": 45.1, "ttftMs": 3900, "turnCount": 12, "routeMismatch": false },
   "account": { "todayTokens": 1800000, "totalTokens": 3300000000, "source": "official+local", "updatedAt": "2026-10-24T14:20:39+08:00" },
   "health": { "status": "normal", "baselineWindowDays": 7, "sampleTurns": 12, "model": "gpt-6.1-sol", "effort": "xhigh", "signals": [{ "id": "outputRate", "label": "输出速率", "current": 42.3, "baseline": 45.1, "flagged": false, "detail": "当前 42.3 / 基线 45.1 tok/s" }], "disclaimer": "基于本机近 7 天基线，不代表官方结论" },
-  "resetRadar": { "sources": [{ "sourceId": "ai-sentinel-records", "sourceName": "AI 哨兵记录", "state": "ok", "lastSuccessAt": "2026-10-24T14:20:51+08:00", "lastError": null, "nextScanAt": "2026-10-24T14:21:51+08:00" }, { "sourceId": "ai-sentinel-signals", "sourceName": "AI 哨兵信号", "state": "ok", "lastSuccessAt": "2026-10-24T14:20:51+08:00", "lastError": null, "nextScanAt": "2026-10-24T14:21:51+08:00" }, { "sourceId": "codex-resets", "sourceName": "Codex Resets", "state": "ok", "lastSuccessAt": "2026-10-24T14:20:51+08:00", "lastError": null, "nextScanAt": "2026-10-24T14:21:51+08:00" }, { "sourceId": "openai-status", "sourceName": "官方状态", "state": "down", "lastSuccessAt": null, "lastError": "timeout", "nextScanAt": "2026-10-24T14:21:51+08:00" }], "latestConfirmed": { "id": "reset:1", "sourceId": "ai-sentinel-records", "sourceName": "AI 哨兵记录", "kind": "reset", "severity": "strong", "title": "第 13 天额度重置完成", "summary": "覆盖所有付费用户", "publishedAt": "2026-10-18T05:12:00+08:00", "url": "https://codex-reset.com/zh/radar", "verified": true, "scope": "所有付费用户", "confirmingSources": ["AI 哨兵记录", "AI 哨兵信号", "Codex Resets"] }, "recent": [], "lastScanAt": "2026-10-24T14:20:51+08:00", "nextScanAt": "2026-10-24T14:21:51+08:00" }
+  "resetRadar": { "sources": [{ "sourceId": "ai-sentinel-records", "sourceName": "AI 哨兵记录", "state": "ok", "lastSuccessAt": "2026-10-24T14:20:51+08:00", "lastError": null, "nextScanAt": "2026-10-24T14:21:51+08:00" }, { "sourceId": "ai-sentinel-signals", "sourceName": "AI 哨兵信号", "state": "ok", "lastSuccessAt": "2026-10-24T14:20:51+08:00", "lastError": null, "nextScanAt": "2026-10-24T14:21:51+08:00" }, { "sourceId": "codex-resets", "sourceName": "Codex Resets", "state": "ok", "lastSuccessAt": "2026-10-24T14:20:51+08:00", "lastError": null, "nextScanAt": "2026-10-24T14:21:51+08:00" }, { "sourceId": "openai-status", "sourceName": "官方状态", "state": "down", "lastSuccessAt": null, "lastError": "timeout", "nextScanAt": "2026-10-24T14:21:51+08:00" }], "latestConfirmed": { "id": "reset:1", "sourceId": "ai-sentinel-records", "sourceName": "AI 哨兵记录", "kind": "reset", "severity": "strong", "title": "第 13 天额度重置完成", "summary": "覆盖所有付费用户", "publishedAt": "2026-10-18T05:12:00+08:00", "url": "https://codex-reset.com/zh/radar", "verified": true, "scope": "所有付费用户", "confirmingSources": ["AI 哨兵记录", "AI 哨兵信号", "Codex Resets"] }, "latestForecast": { "id": "forecast:1", "sourceId": "codex-resets", "sourceName": "Codex Resets", "kind": "verifying", "severity": null, "title": "By midnight PST", "summary": "By midnight PST", "publishedAt": "2026-10-24T13:40:00+08:00", "url": "https://x.com/example", "verified": false, "scope": "Codex 用户", "confirmingSources": ["Codex Resets"] }, "recent": [], "lastScanAt": "2026-10-24T14:20:51+08:00", "nextScanAt": "2026-10-24T14:21:51+08:00" }
 };
 
 /**
@@ -179,6 +179,44 @@ export const mockStatusConfirmingSnapshot: UsageSnapshot = {
   },
 };
 
+/** A reset record that only one source carried. */
+export const mockSingleSourceResetSnapshot: UsageSnapshot = {
+  ...mockSnapshot,
+  resetRadar: {
+    ...mockSnapshot.resetRadar,
+    latestConfirmed: null,
+    latestReset: {
+      id: "reset:single",
+      sourceId: "ai-sentinel-records",
+      sourceName: "AI 哨兵记录",
+      kind: "reset",
+      severity: "strong",
+      title: "Day 20 重置完成 · 站长确认",
+      summary: "站长已确认 Day 20 重置落地。",
+      publishedAt: "2026-10-25T00:00:00+08:00",
+      url: "https://x.com/example",
+      verified: true,
+      scope: "Codex 用户",
+      confirmingSources: ["AI 哨兵记录"],
+    },
+    latestForecast: null,
+  },
+};
+
+/** The weekly window reset five minutes ago. */
+export const mockJustResetSnapshot: UsageSnapshot = (() => {
+  const resetsAt = new Date(Date.now() + 7 * 24 * 3600_000 - 5 * 60_000);
+  return {
+    ...mockSnapshot,
+    quota: {
+      ...mockSnapshot.quota,
+      weeklyResetsAt: resetsAt.toISOString(),
+      weeklyWindowMinutes: 10_080,
+      weeklyWindowStartedAt: new Date(resetsAt.getTime() - 7 * 24 * 3600_000).toISOString(),
+    },
+  };
+})();
+
 /** Every fixture the mock host can serve, keyed by the `fixture` query. */
 export const mockSnapshots: Record<string, UsageSnapshot> = {
   default: mockSnapshot,
@@ -188,6 +226,8 @@ export const mockSnapshots: Record<string, UsageSnapshot> = {
   incident: mockIncidentSnapshot,
   "degraded-source": mockDegradedSourceSnapshot,
   "single-source": mockSingleSourceSnapshot,
+  "single-source-reset": mockSingleSourceResetSnapshot,
+  "just-reset": mockJustResetSnapshot,
   "credits-error": mockCreditsErrorSnapshot,
   "login-expired": mockLoginExpiredSnapshot,
   "strong-unverified": mockStrongUnverifiedSnapshot,

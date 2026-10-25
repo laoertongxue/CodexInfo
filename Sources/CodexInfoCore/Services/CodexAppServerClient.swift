@@ -95,7 +95,8 @@ public struct AppServerQuotaFallback: QuotaFallbackProviding {
             weeklyRemainingPercent: weekly.remainingPercent,
             weeklyResetsAt: weekly.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
             source: .appServer,
-            fetchedAt: now
+            fetchedAt: now,
+            weeklyWindowMinutes: weekly.windowDurationMins
         )
     }
 }
@@ -115,7 +116,8 @@ public struct SessionQuotaFallback: QuotaFallbackProviding {
             weeklyRemainingPercent: weekly.remainingPercent,
             weeklyResetsAt: weekly.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
             source: .session,
-            fetchedAt: now
+            fetchedAt: now,
+            weeklyWindowMinutes: weekly.windowDurationMins
         )
     }
 }

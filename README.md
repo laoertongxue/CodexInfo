@@ -6,11 +6,11 @@ macOS 菜单栏里的 AI 编程客户端用量面板：把 **Codex、Qoder、Min
 
 不修改客户端包，不注入 DOM；贴片是独立浮窗。点击贴片会打开菜单栏面板并选中对应客户端。
 
-[下载最新版](https://github.com/laoertongxue/CodexInfo/releases/latest) · [验收清单](docs/acceptance.md) · [设计文档](docs/superpowers/specs/2026-10-24-codexinfo-design.md) · [实现记录](docs/implementation-log.md)
+[下载最新版](https://github.com/laoertongxue/CodexInfo/releases/latest) · [验收清单](docs/acceptance.md) · [架构评审](docs/architecture-review.md) · [设计文档](docs/superpowers/specs/2026-10-24-codexinfo-design.md) · [实现记录](docs/implementation-log.md)
 
 ## 功能
 
-- **菜单栏常驻面板**：周额度、重置卡、重置追踪（四源扫描与交叉确认）、模型状态（本地降智判断）、当前会话 tok/s、账号 Token 统计。
+- **菜单栏常驻面板**：周额度、重置卡、本机周额度上次/下次重置（北京时间）、社区重置记录与预告、模型状态（本地降智判断）、当前会话 tok/s、账号 Token 统计。
 - **四客户端切换**：Codex / Qoder / MiniMax / DeepSeek 四个标签，各自显示自己的额度口径。
 - **只读悬浮贴片**：ChatGPT / Codex、Qoder、DeepSeek Harness、MiniMax Code 的输入区各显示自己的额度或余额；跟随原生模型选择器，点击打开对应面板。
 - **分段额度**：
@@ -25,7 +25,7 @@ macOS 菜单栏里的 AI 编程客户端用量面板：把 **Codex、Qoder、Min
 
 ### 直接下载
 
-1. 打开 [Releases](https://github.com/laoertongxue/CodexInfo/releases/latest)，下载 `CodexInfo-0.1.0-macos-arm64.zip` 和 `SHA256SUMS.txt`。
+1. 打开 [Releases](https://github.com/laoertongxue/CodexInfo/releases/latest)，下载 `CodexInfo-0.1.1-macos-arm64.zip` 和 `SHA256SUMS.txt`。
 2. 解压，把 `CodexInfo.app` 拖到「应用程序」。
 3. 首次打开：在 Finder 中右键 `CodexInfo.app` →「打开」。应用使用 ad-hoc 签名，未做 Apple 公证，因此不能双击直接打开。
 4. 如果仍被 Gatekeeper 拦截，可清除隔离属性：
@@ -80,6 +80,8 @@ enabled = true
 | DeepSeek Harness | 官方钱包接口（本地 grant） | 余额、模型 / 档位 |
 
 社区重置源：CodexRadar、codex-reset.com、status.openai.com；至少两个重置类来源一致才标记为已确认。
+
+重置追踪先显示**本机周额度窗口**：上次/下次重置按北京时间显示，重置后 1 小时内标「刚刚重置」。社区记录即使只有一个来源也会直接显示；最新预告会单独列出并保留原文，不再隐藏到折叠区里。雷达记录会从上一份快照恢复，来源暂时失败或只返回空页时不会清空最近重置。额度每 60 秒刷新、重置源每 60 秒扫描；在「设置 → 通知」中开启后，周额度重置前 15 分钟会发一次系统提醒。
 
 ## 隐私与安全
 

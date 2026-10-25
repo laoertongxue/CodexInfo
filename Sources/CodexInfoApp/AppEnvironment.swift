@@ -34,9 +34,9 @@ final class AppEnvironment: ObservableObject {
     var openRequested: (() -> Void)?
 
     private var refreshTask: Task<Void, Never>?
-    /// One snapshot build at a time: the 5-second loop, the panel refresh and
-    /// a scan can all ask; an older build must never land after a newer one.
-    private var refreshInFlight = false
+    /// One snapshot build at a time; a request that arrives during a build
+    /// schedules exactly one rerun instead of being dropped.
+    private let refreshGate = RefreshGate()
 
     init(
         live: LiveEnvironment = .live(),
@@ -77,9 +77,12 @@ final class AppEnvironment: ObservableObject {
 
     /// Rebuilds the snapshot and hands it to the panel.
     func refresh() async {
-        guard !refreshInFlight else { return }
-        refreshInFlight = true
-        defer { refreshInFlight = false }
+        await refreshGate.run { [weak self] in
+            await self?.performRefresh()
+        }
+    }
+
+    private func performRefresh() async {
         let current = settings.settings
         let value = await live.builder.build(
             now: Date(),

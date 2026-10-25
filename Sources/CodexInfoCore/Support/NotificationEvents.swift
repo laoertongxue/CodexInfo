@@ -6,6 +6,8 @@ public enum NotificationEventKind: String, Codable, Equatable, Hashable, Sendabl
     case confirmedReset
     /// A reset the source verified and marked as strong.
     case strongSignal
+    /// The weekly window is about to reset.
+    case resetApproaching
     /// A reset credit that expires soon.
     case cardExpiring
     /// A weekly quota that is nearly used up.
@@ -39,6 +41,34 @@ public struct NotificationEvent: Equatable, Hashable, Sendable, Identifiable {
     public var id: String { key }
 }
 
+/// Keeps the keys of the events that were already handled.
+///
+/// The keys are kept in insertion order, not sorted order: when the limit is
+/// reached the oldest key is dropped and a recent one is not re-sent.
+public enum NotificationKeyHistory {
+    /// Appends the fresh keys and trims the oldest ones.
+    ///
+    /// - Parameters:
+    ///   - existing: the keys in the order they were first handled.
+    ///   - fresh: the keys that were not handled before.
+    ///   - limit: the maximum number of keys to remember.
+    public static func appended(
+        _ existing: [String],
+        fresh: Set<String>,
+        limit: Int = 200
+    ) -> [String] {
+        guard limit > 0 else { return [] }
+        var ordered = existing
+        for key in fresh.sorted() where !ordered.contains(key) {
+            ordered.append(key)
+        }
+        if ordered.count > limit {
+            ordered.removeFirst(ordered.count - limit)
+        }
+        return ordered
+    }
+}
+
 /// Finds the events of a snapshot.
 ///
 /// The four triggers of the design spec are evaluated here, so the rules can
@@ -48,6 +78,8 @@ public enum NotificationEventEvaluator {
     public static let cardExpiryHours: TimeInterval = 24
     /// The remaining weekly quota below which the event is raised.
     public static let lowQuotaPercent = 10
+    /// How long before the weekly reset the reminder is raised.
+    public static let resetLeadTime: TimeInterval = 15 * 60
 
     /// The events of a snapshot.
     ///
@@ -76,6 +108,22 @@ public enum NotificationEventEvaluator {
             ))
         }
 
+        if let reset = snapshot.quota.weeklyResetsAt {
+            let seconds = reset.timeIntervalSince(now)
+            if seconds > 0, seconds <= resetLeadTime {
+                let minutes = max(1, Int((seconds / 60).rounded()))
+                let remaining = snapshot.quota.weeklyRemainingPercent.map { "\($0)%" } ?? "—"
+                events.append(NotificationEvent(
+                    kind: .resetApproaching,
+                    // The exact reset moment can drift by a second; the reset
+                    // hour is stable for the reminder window.
+                    key: "resetSoon:\(quotaCycle(snapshot))",
+                    title: "周额度将在 \(minutes) 分钟后重置",
+                    body: "北京时间 \(beijingTime(reset)) 重置 · 当前剩余 \(remaining)"
+                ))
+            }
+        }
+
         for card in snapshot.resetCredits.items where card.isAvailable {
             guard let expiry = card.expiresAt, expiry > now else { continue }
             let hours = expiry.timeIntervalSince(now) / 3600
@@ -91,7 +139,7 @@ public enum NotificationEventEvaluator {
         if let remaining = snapshot.quota.weeklyRemainingPercent, remaining < lowQuotaPercent {
             events.append(NotificationEvent(
                 kind: .lowQuota,
-                key: "quota:\(quotaCycle(snapshot))",
+                key: "quota:\(lowQuotaCycle(snapshot))",
                 title: "周额度低于 \(lowQuotaPercent)%",
                 body: "剩余 \(remaining)%"
             ))
@@ -151,16 +199,36 @@ public enum NotificationEventEvaluator {
 
     /// The key of the quota cycle.
     ///
-    /// The cycle of the quota is the moment the weekly window resets. Without
-    /// that moment the week of the snapshot is used, so the quota is notified
-    /// about once per week and not once per refresh.
+    /// The cycle is the reset hour, rounded to the nearest hour. A reset
+    /// timestamp that drifts by a second keeps the same key, while a second
+    /// reset in the same week gets its own reminder.
     private static func quotaCycle(_ snapshot: UsageSnapshot) -> String {
-        if let resetsAt = snapshot.quota.weeklyResetsAt {
-            return String(Int(resetsAt.timeIntervalSince1970))
+        let raw = snapshot.quota.weeklyResetsAt ?? snapshot.generatedAt
+        return String(Int((raw.timeIntervalSince1970 / 3600).rounded()))
+    }
+
+    /// The key of the low-quota event.
+    ///
+    /// Without a reset instant the snapshot time would form an hourly key and
+    /// repeat the warning every hour. Fall back to the ISO week instead.
+    private static func lowQuotaCycle(_ snapshot: UsageSnapshot) -> String {
+        guard snapshot.quota.weeklyResetsAt == nil else {
+            return quotaCycle(snapshot)
         }
         var calendar = Calendar(identifier: .iso8601)
         calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
-        let parts = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: snapshot.generatedAt)
+        let parts = calendar.dateComponents(
+            [.yearForWeekOfYear, .weekOfYear], from: snapshot.generatedAt
+        )
         return "\(parts.yearForWeekOfYear ?? 0)-\(parts.weekOfYear ?? 0)"
+    }
+
+    /// The reset moment in Beijing time, for the notification body.
+    private static func beijingTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "MM/dd HH:mm"
+        return formatter.string(from: date)
     }
 }

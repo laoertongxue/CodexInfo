@@ -1395,6 +1395,21 @@ func registerCoreTests() {
         context.expectEqual(signals.first?.url?.absoluteString, "https://x.com/example")
     }
 
+    test("CodexRadarCurrentSource keeps distinct event ids") { context in
+        let firstJSON = #"{"window":{"scope":"Codex 用户"},"completion_observation":{"event_id":"event-a","status":"completed","confirmation_level":"confirmed","occurred_on":"2026-10-24","title_zh":"Day 18 重置完成"}}"#
+        let secondJSON = #"{"window":{"scope":"Codex 用户"},"completion_observation":{"event_id":"event-b","status":"completed","confirmation_level":"confirmed","occurred_on":"2026-10-24","title_zh":"Day 18 重置完成"}}"#
+        let http = MockHTTPClient(responses: [
+            HTTPResponse(data: firstJSON.data(using: .utf8)!, statusCode: 200),
+            HTTPResponse(data: secondJSON.data(using: .utf8)!, statusCode: 200),
+        ])
+        let source = CodexRadarCurrentSource()
+        let first = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        let second = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(first.first?.id, "ai-sentinel-records:event-a")
+        context.expectEqual(second.first?.id, "ai-sentinel-records:event-b")
+        context.expectTrue(first.first?.id != second.first?.id)
+    }
+
     test("CodexRadarCurrentSource ignores an unconfirmed announcement") { context in
         let json = #"{"monitored_at":"2026-10-24T12:00:00+08:00","window":{"scope":"Codex 用户"},"completion_observation":{"status":"verifying","confirmation_level":"unconfirmed","occurred_on":"2026-10-24","title_zh":"Day 19 重置预告"}}"#
         let http = MockHTTPClient(response: HTTPResponse(data: json.data(using: .utf8)!, statusCode: 200))
@@ -1504,8 +1519,8 @@ func registerCoreTests() {
         context.expectEqual(record?.kind, .reset)
     }
 
-    test("CodexResetsSource keeps an unconfirmed claim verifying and never fabricates a strong severity") { context in
-        let feed = #"{"fetched_at":"2026-10-24T12:00:00Z","stale":false,"signal":{"summary":"Lands tomorrow","at":"2026-10-22T06:55:54Z","url":"https://x.com/example","kind":"signal","active":true},"tweets":[{"id":"t1","url":"https://x.com/t1","text":"That is a reset!","at":"2026-10-23T04:46:19Z","explicit_reset_claim":true,"reset_verification_status":"expired"},{"id":"t2","url":"https://x.com/t2","text":"Shipping notes","at":"2026-10-23T05:00:00Z","explicit_reset_claim":false}]}"#
+    test("CodexResetsSource keeps an explicit claim and a forecast verifying without a strong severity") { context in
+        let feed = #"{"fetched_at":"2026-10-24T12:00:00Z","stale":false,"signal":{"summary":"Lands tomorrow","at":"2026-10-22T06:55:54Z","url":"https://x.com/example","kind":"signal","active":true},"tweets":[{"id":"t1","url":"https://x.com/t1","text":"That is a reset!","at":"2026-10-23T04:46:19Z","explicit_reset_claim":true,"reset_verification_status":"expired"},{"id":"t2","url":"https://x.com/t2","text":"Shipping notes","at":"2026-10-23T05:00:00Z","explicit_reset_claim":false},{"id":"t3","url":"https://x.com/t3","text":"By midnight PST","at":"2026-10-25T03:40:04Z","kind":"signal","explicit_reset_claim":false,"reset_verification_candidate":true}]}"#
         let status = #"{"indicator":"none","description":"All Systems Operational","codex":"operational"}"#
         let http = MockHTTPClient(responses: [
             HTTPResponse(data: feed.data(using: .utf8)!, statusCode: 200),
@@ -1517,6 +1532,10 @@ func registerCoreTests() {
         context.expectEqual(claim?.kind, .verifying)
         context.expectEqual(claim?.verified, false)
         context.expectEqual(signals.filter { $0.id.contains("tweet:t2") }.count, 0)
+        let forecast = signals.first { $0.id.contains("tweet:t3") }
+        context.expectEqual(forecast?.kind, .verifying)
+        context.expectEqual(forecast?.title, "By midnight PST")
+        context.expectEqual(forecast?.verified, false)
         context.expectTrue(signals.allSatisfy { $0.severity != "strong" })
     }
 
@@ -1570,9 +1589,219 @@ func registerCoreTests() {
         )
         let snapshot = await service.scan(now: now)
         context.expectEqual(snapshot.latestConfirmed, nil)
+        context.expectEqual(snapshot.latestReset?.id, "record")
+        context.expectEqual(snapshot.latestReset?.confirmingSources, ["AI 哨兵记录"])
         context.expectEqual(snapshot.recent.count, 1)
         context.expectEqual(snapshot.recent.first?.confirmingSources.count, 1)
         context.expectEqual(snapshot.recent.first?.confirmingSources, ["AI 哨兵记录"])
+    }
+
+    test("ResetRadarService keeps a forecast beside a same-day reset") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 25, 12, in: calendar)
+        let reset = radarSignal(
+            id: "reset", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            title: "Day 20 重置完成", publishedAt: now.addingTimeInterval(-3600), severity: "strong"
+        )
+        let forecast = radarSignal(
+            id: "forecast", sourceId: "codex-resets", sourceName: "Codex Resets",
+            title: "By midnight PST", publishedAt: now, kind: .verifying, verified: false
+        )
+        let service = ResetRadarService(
+            sources: [
+                FakeResetSource(id: "ai-sentinel-records", name: "AI 哨兵记录", signals: [reset]),
+                FakeResetSource(id: "codex-resets", name: "Codex Resets", signals: [forecast]),
+            ],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestReset?.id, "reset")
+        context.expectEqual(snapshot.latestForecast?.id, "forecast")
+        context.expectEqual(snapshot.latestConfirmed, nil)
+    }
+
+    test("ResetRadarService keeps the last reset when a later page is empty") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 25, 12, in: calendar)
+        let reset = radarSignal(
+            id: "reset", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            title: "Day 20 重置完成", publishedAt: now.addingTimeInterval(-3600), severity: "strong"
+        )
+        let source = SequencedResetSource(
+            id: "ai-sentinel-records", name: "AI 哨兵记录", pages: [[reset], []]
+        )
+        let service = ResetRadarService(
+            sources: [source], http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let first = await service.scan(now: now)
+        context.expectEqual(first.latestReset?.id, "reset")
+        let second = await service.scan(now: now.addingTimeInterval(60))
+        context.expectEqual(second.latestReset?.id, "reset")
+        context.expectEqual(second.recent.contains { $0.id == "reset" }, true)
+    }
+
+    test("ResetRadarService restores reset and forecast records from a seed") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 25, 12, in: calendar)
+        let reset = radarSignal(
+            id: "reset", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            title: "Day 20 重置完成", publishedAt: now.addingTimeInterval(-3600), severity: "strong"
+        )
+        let forecast = radarSignal(
+            id: "forecast", sourceId: "codex-resets", sourceName: "Codex Resets",
+            title: "By midnight PST", publishedAt: now, kind: .verifying, verified: false
+        )
+        let seed = ResetRadarSnapshot(
+            sources: [], latestConfirmed: nil, latestReset: reset, latestForecast: forecast,
+            recent: [reset], lastScanAt: now.addingTimeInterval(-60), nextScanAt: now
+        )
+        let service = ResetRadarService(
+            sources: [
+                CountingResetSource(id: "ai-sentinel-records", name: "AI 哨兵记录"),
+                CountingResetSource(id: "codex-resets", name: "Codex Resets"),
+            ],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar, seed: seed
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestReset?.id, "reset")
+        context.expectEqual(snapshot.latestForecast?.id, "forecast")
+    }
+
+    test("ResetRadarService restores a confirmed group from a seed") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 25, 12, in: calendar)
+        let confirmed = ResetSignal(
+            id: "reset", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            kind: .reset, severity: "strong", title: "Day 20 重置完成",
+            summary: "站长确认", publishedAt: now.addingTimeInterval(-3600),
+            url: nil, verified: true, scope: "Codex 用户",
+            confirmingSources: ["AI 哨兵记录", "AI 哨兵信号"]
+        )
+        let seed = ResetRadarSnapshot(
+            sources: [], latestConfirmed: confirmed, latestReset: confirmed,
+            latestForecast: nil, recent: [], lastScanAt: now.addingTimeInterval(-60), nextScanAt: now
+        )
+        let service = ResetRadarService(
+            sources: [
+                CountingResetSource(id: "ai-sentinel-records", name: "AI 哨兵记录"),
+                CountingResetSource(
+                    id: "ai-sentinel-signals", name: "AI 哨兵信号",
+                    error: HTTPError.status(500)
+                ),
+            ],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar, seed: seed
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestReset?.id, "reset")
+        context.expectEqual(snapshot.latestConfirmed?.confirmingSources.count, 2)
+        context.expectEqual(
+            snapshot.latestConfirmed?.confirmingSources,
+            ["AI 哨兵记录", "AI 哨兵信号"]
+        )
+    }
+
+    test("Seed confirmation survives a re-published raw row") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 25, 12, in: calendar)
+        let confirmed = ResetSignal(
+            id: "reset", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            kind: .reset, severity: "strong", title: "Day 20 重置完成",
+            summary: "站长确认", publishedAt: now.addingTimeInterval(-3600),
+            url: nil, verified: true, scope: "Codex 用户",
+            confirmingSources: ["AI 哨兵记录", "AI 哨兵信号"]
+        )
+        let seed = ResetRadarSnapshot(
+            sources: [], latestConfirmed: confirmed, latestReset: confirmed,
+            latestForecast: nil, recent: [], lastScanAt: now.addingTimeInterval(-60), nextScanAt: now
+        )
+        let raw = radarSignal(
+            id: "reset", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            title: "Day 20 重置完成", publishedAt: now, severity: "strong"
+        )
+        let service = ResetRadarService(
+            sources: [
+                CountingResetSource(
+                    id: "ai-sentinel-records", name: "AI 哨兵记录", signals: [raw]
+                ),
+                CountingResetSource(
+                    id: "ai-sentinel-signals", name: "AI 哨兵信号",
+                    error: HTTPError.status(500)
+                ),
+            ],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar, seed: seed
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestReset?.id, "reset")
+        context.expectEqual(snapshot.latestConfirmed?.confirmingSources.count, 2)
+    }
+
+    test("ResetRadarService keeps a reset when newer forecasts fill the source cap") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 25, 12, in: calendar)
+        let reset = radarSignal(
+            id: "reset", sourceId: "codex-resets", sourceName: "Codex Resets",
+            title: "Day 20 重置完成", publishedAt: now.addingTimeInterval(-11 * 86_400),
+            severity: "strong"
+        )
+        let forecasts = (1...10).map { index in
+            radarSignal(
+                id: "forecast-\(index)", sourceId: "codex-resets", sourceName: "Codex Resets",
+                title: "Forecast \(index)",
+                publishedAt: now.addingTimeInterval(Double(index - 10) * 86_400),
+                kind: .verifying,
+                verified: false
+            )
+        }
+        let service = ResetRadarService(
+            sources: [
+                FakeResetSource(
+                    id: "codex-resets", name: "Codex Resets", signals: [reset] + forecasts
+                )
+            ],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestReset?.id, "reset")
+        context.expectEqual(snapshot.latestForecast?.id, "forecast-10")
+        context.expectEqual(snapshot.latestStrong?.id, "reset")
+    }
+
+    test("ResetRadarService shares one in-flight scan") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let source = CountingResetSource(id: "a", name: "AI 哨兵记录", delay: 0.1)
+        let service = ResetRadarService(
+            sources: [source], http: MockHTTPClient(responses: []), interval: 60
+        )
+        async let first = service.scan(now: now)
+        async let second = service.scan(now: now)
+        _ = await (first, second)
+        context.expectEqual(source.fetchCount, 1)
+    }
+
+    test("ResetRadarService rescans after a clock rollback") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let source = CountingResetSource(id: "a", name: "AI 哨兵记录")
+        let service = ResetRadarService(
+            sources: [source], http: MockHTTPClient(responses: []), interval: 60
+        )
+        _ = await service.scan(now: now)
+        context.expectEqual(source.fetchCount, 1)
+        _ = await service.radarSnapshot(now: now.addingTimeInterval(-3600))
+        context.expectEqual(source.fetchCount, 2)
+    }
+
+    test("ResetRadarService retries a blocked source after a clock rollback") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let source = CountingResetSource(
+            id: "a", name: "AI 哨兵记录", error: HTTPError.status(500)
+        )
+        let service = ResetRadarService(
+            sources: [source], http: MockHTTPClient(responses: []), interval: 60
+        )
+        _ = await service.scan(now: now)
+        context.expectEqual(source.fetchCount, 1)
+        _ = await service.radarSnapshot(now: now.addingTimeInterval(-3600))
+        context.expectEqual(source.fetchCount, 2)
     }
 
     test("ResetRadarService confirms two differently titled signals of the same day") { context in
@@ -1599,6 +1828,29 @@ func registerCoreTests() {
         context.expectEqual(snapshot.recent.count, 1)
         context.expectEqual(snapshot.latestConfirmed?.confirmingSources.count, 2)
         context.expectEqual(snapshot.latestConfirmed?.title, "第 13 天额度重置完成")
+    }
+
+    test("ResetRadarService keeps two timed resets far apart on one day separate") { context in
+        let calendar = radarCalendar()
+        let now = radarDate(2026, 10, 18, 23, in: calendar)
+        let early = radarSignal(
+            id: "early", sourceId: "ai-sentinel-records", sourceName: "AI 哨兵记录",
+            title: "凌晨重置", publishedAt: radarDate(2026, 10, 18, 1, in: calendar)
+        )
+        let late = radarSignal(
+            id: "late", sourceId: "ai-sentinel-signals", sourceName: "AI 哨兵信号",
+            title: "深夜重置", publishedAt: now
+        )
+        let service = ResetRadarService(
+            sources: [
+                FakeResetSource(id: "ai-sentinel-records", name: "AI 哨兵记录", signals: [early]),
+                FakeResetSource(id: "ai-sentinel-signals", name: "AI 哨兵信号", signals: [late]),
+            ],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.recent.count, 2)
+        context.expectEqual(snapshot.latestConfirmed, nil)
     }
 
     test("ResetRadarService never confirms from the official status source") { context in
@@ -1658,6 +1910,7 @@ func registerCoreTests() {
         )
         let snapshot = await service.scan(now: now)
         context.expectEqual(snapshot.latestConfirmed?.confirmingSources.count, 2)
+        context.expectEqual(snapshot.latestReset?.id, "record")
         context.expectEqual(snapshot.recent.count, 2)
         context.expectTrue(snapshot.recent.contains { $0.kind == .status })
     }
@@ -2311,6 +2564,56 @@ func registerCoreTests() {
         context.expectEqual(weekly?.resetsAt, 1_793_382_111)
     }
 
+    test("Quota service keeps the weekly window length") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let payload = #"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":29,"limit_window_seconds":604800,"reset_at":1793382111}}}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: payload.data(using: .utf8)!, statusCode: 200))
+        let client = OfficialUsageClient(
+            http: http,
+            credentials: StubCredentials(token: "tok_test"),
+            baseURL: URL(string: "https://chatgpt.com/backend-api")!
+        )
+        let service = QuotaService(official: client, fallback: nil)
+        let snapshot = await service.quotaSnapshot(now: now)
+        context.expectEqual(snapshot?.weeklyWindowMinutes, 10_080)
+        context.expectEqual(snapshot?.weeklyResetsAt, Date(timeIntervalSince1970: 1_793_382_111))
+        context.expectEqual(
+            snapshot?.weeklyWindowStartedAt,
+            Date(timeIntervalSince1970: 1_793_382_111 - 10_080 * 60)
+        )
+    }
+
+    test("Quota snapshot does not invent a window start without the window length") { context in
+        let resetsAt = Date(timeIntervalSince1970: 1_793_382_111)
+        let quota = QuotaSnapshot(
+            planType: "pro", weeklyRemainingPercent: 71, weeklyResetsAt: resetsAt,
+            source: .official, fetchedAt: Date(timeIntervalSince1970: 1_790_000_000)
+        )
+        context.expectEqual(quota.weeklyWindowStartedAt, nil)
+    }
+
+    test("Quota service keeps a cached quota and marks the expired login") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let payload = #"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":16,"limit_window_seconds":604800,"reset_at":1793382111}}}"#
+        let http = MockHTTPClient(responses: [
+            HTTPResponse(data: payload.data(using: .utf8)!, statusCode: 200),
+            HTTPResponse(data: Data("{}".utf8), statusCode: 401),
+        ])
+        let client = OfficialUsageClient(
+            http: http,
+            credentials: StubCredentials(token: "tok_test"),
+            baseURL: URL(string: "https://chatgpt.com/backend-api")!
+        )
+        let service = QuotaService(official: client, fallback: nil)
+        let first = await service.quotaSnapshot(now: now)
+        context.expectEqual(first?.weeklyRemainingPercent, 84)
+        context.expectEqual(first?.authExpired, false)
+        let second = await service.quotaSnapshot(now: now.addingTimeInterval(61))
+        context.expectEqual(second?.weeklyRemainingPercent, 84)
+        context.expectEqual(second?.authExpired, true)
+        context.expectEqual(second?.weeklyWindowStartedAt, Date(timeIntervalSince1970: 1_793_382_111 - 10_080 * 60))
+    }
+
     test("Official client reads the reset time from the remaining duration") { context in
         let payload = #"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":50,"limit_window_seconds":604800,"reset_after_seconds":3600}}}"#
         let http = MockHTTPClient(response: HTTPResponse(data: payload.data(using: .utf8)!, statusCode: 200))
@@ -2387,6 +2690,54 @@ func registerCoreTests() {
         context.expectEqual(NetworkAllowList.allows(miniMax, hosts: SourceHosts.miniMax), true)
         context.expectEqual(NetworkAllowList.allows(deepSeek, hosts: SourceHosts.miniMax), false)
     }
+
+    test("RefreshGate queues one rerun and never overlaps work") { context in
+        let gate = RefreshGate()
+        let probe = RefreshProbe()
+        let operation: @Sendable () async -> Void = {
+            probe.begin()
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            probe.end()
+        }
+        async let first: Void = gate.run(operation)
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        async let second: Void = gate.run(operation)
+        _ = await (first, second)
+        context.expectEqual(probe.starts, 2)
+        context.expectEqual(probe.maxActive, 1)
+    }
+
+    test("Core stays independent of UI and live targets") { context in
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let core = root.appendingPathComponent("Sources/CodexInfoCore", isDirectory: true)
+        guard let enumerator = FileManager.default.enumerator(
+            at: core,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ) else {
+            context.fail("the Core directory was not found at \(core.path)")
+            return
+        }
+        let forbidden = [
+            "import AppKit", "import SwiftUI", "import WebKit",
+            "import UserNotifications", "import CodexInfoLive",
+            "import CodexInfoApp", "import CodexInfoMCPKit",
+        ]
+        var checked = 0
+        for case let url as URL in enumerator where url.pathExtension == "swift" {
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            checked += 1
+            for phrase in forbidden {
+                context.expectTrue(
+                    !text.contains(phrase),
+                    "\(url.lastPathComponent) must not contain \(phrase)"
+                )
+            }
+        }
+        context.expectTrue(checked > 10, "the Core sources were found")
+    }
 }
 
 /// A source that always returns the same signals.
@@ -2423,15 +2774,23 @@ final class CountingResetSource: ResetSource, @unchecked Sendable {
     let displayName: String
     let signals: [ResetSignal]
     let error: Error?
+    let delay: TimeInterval
 
     private let lock = NSLock()
     private var calls = 0
 
-    init(id: String, name: String, signals: [ResetSignal] = [], error: Error? = nil) {
+    init(
+        id: String,
+        name: String,
+        signals: [ResetSignal] = [],
+        error: Error? = nil,
+        delay: TimeInterval = 0
+    ) {
         self.id = id
         self.displayName = name
         self.signals = signals
         self.error = error
+        self.delay = delay
     }
 
     var fetchCount: Int {
@@ -2440,9 +2799,56 @@ final class CountingResetSource: ResetSource, @unchecked Sendable {
 
     func fetch(using http: HTTPClient, now: Date) async throws -> [ResetSignal] {
         lock.withLock { calls += 1 }
+        if delay > 0 {
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
         if let error { throw error }
         return signals
     }
+}
+
+/// A source that returns one page per call.
+final class SequencedResetSource: ResetSource, @unchecked Sendable {
+    let id: String
+    let displayName: String
+
+    private let lock = NSLock()
+    private var pages: [[ResetSignal]]
+
+    init(id: String, name: String, pages: [[ResetSignal]]) {
+        self.id = id
+        self.displayName = name
+        self.pages = pages
+    }
+
+    func fetch(using http: HTTPClient, now: Date) async throws -> [ResetSignal] {
+        lock.withLock {
+            pages.isEmpty ? [] : pages.removeFirst()
+        }
+    }
+}
+
+/// A lock-protected probe for the RefreshGate test.
+final class RefreshProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var startsCount = 0
+    private var activeCount = 0
+    private var maxActiveCount = 0
+
+    func begin() {
+        lock.withLock {
+            startsCount += 1
+            activeCount += 1
+            maxActiveCount = max(maxActiveCount, activeCount)
+        }
+    }
+
+    func end() {
+        lock.withLock { activeCount -= 1 }
+    }
+
+    var starts: Int { lock.withLock { startsCount } }
+    var maxActive: Int { lock.withLock { maxActiveCount } }
 }
 
 /// A source that answers only after a delay.

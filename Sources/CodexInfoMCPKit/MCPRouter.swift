@@ -15,7 +15,7 @@ public struct MCPRouter: Sendable {
     /// The name the server answers with.
     public static let serverName = "codexinfo"
     /// The version the server answers with.
-    public static let serverVersion = "0.1.0"
+    public static let serverVersion = AppConstants.version
     /// The protocol versions the server answers with.
     ///
     /// A client that asks for one of them gets the version it asked for; every

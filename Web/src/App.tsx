@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
-import { DASH, formatDateTime, formatRate, formatRemaining, formatTokens } from "./format";
+import { DASH, formatBeijingDateTime, formatDateTime, formatRate, formatRemaining, formatTokens } from "./format";
 import { useHost } from "./host/useHost";
 import type { ClientUsageSnapshot, DataState, HealthStatus, ResetSignal, SourceState, UsageSnapshot } from "./data/types";
 import type { Host } from "./host/types";
@@ -486,10 +486,62 @@ function CodexPanel({
       ? Math.round((session.contextTokens / session.contextWindow) * 100)
       : null;
 
-  const latest = radar.latestConfirmed ?? null;
+  const statusSignal =
+    radar.latestConfirmed?.kind === "status"
+      ? radar.latestConfirmed
+      : radar.recent.find((signal) => signal.kind === "status") ?? null;
+  const confirmedReset =
+    radar.latestConfirmed?.kind === "reset" ? radar.latestConfirmed : null;
+  const latestResetCandidate = radar.latestReset ?? null;
+  // A payload from before `latestReset` existed only carries `latestConfirmed`.
+  // Keep the confirmed record when it is at least as new as the single-source
+  // record, so an unverified fixture never becomes verified by accident.
+  const latestReset =
+    confirmedReset != null &&
+    (latestResetCandidate == null ||
+      new Date(confirmedReset.publishedAt ?? 0).getTime() >=
+        new Date(latestResetCandidate.publishedAt ?? 0).getTime())
+      ? confirmedReset
+      : latestResetCandidate ??
+        confirmedReset ??
+        radar.recent.find((signal) => signal.kind === "reset") ??
+        null;
+  const latestForecast =
+    radar.latestForecast ??
+    radar.recent.find((signal) => signal.kind === "verifying") ??
+    null;
+  const latest = latestReset;
   const tone = latest ? signalTone(latest) : "none";
+  const statusTone = statusSignal ? signalTone(statusSignal) : "none";
   const confirmations = latest ? confirmingResetSources(latest) : [];
   const confirmed = latest ? isConfirmedReset(latest) : false;
+  const forecastRelevant =
+    latestForecast != null &&
+    (latest == null ||
+      latestForecast.publishedAt == null ||
+      latest.publishedAt == null ||
+      new Date(latestForecast.publishedAt).getTime() >= new Date(latest.publishedAt).getTime());
+  const weeklyWindowMinutes =
+    quota.weeklyWindowMinutes != null && quota.weeklyWindowMinutes > 0
+      ? quota.weeklyWindowMinutes
+      : 10_080;
+  const nextResetValue =
+    quotaUsable && quota.weeklyResetsAt ? new Date(quota.weeklyResetsAt).getTime() : Number.NaN;
+  const nextResetMs = Number.isNaN(nextResetValue) ? null : nextResetValue;
+  const windowStartValue =
+    quotaUsable && quota.weeklyWindowStartedAt
+      ? new Date(quota.weeklyWindowStartedAt).getTime()
+      : Number.NaN;
+  // New snapshots carry the window start from the domain. Older payloads
+  // fall back to the seven-day window for one release cycle.
+  const lastResetMs = !Number.isNaN(windowStartValue)
+    ? windowStartValue
+    : nextResetMs != null
+      ? nextResetMs - weeklyWindowMinutes * 60_000
+      : null;
+  const sinceLastResetMs = lastResetMs != null ? now - lastResetMs : null;
+  const justReset =
+    sinceLastResetMs != null && sinceLastResetMs >= 0 && sinceLastResetMs <= 3_600_000;
   const sourcesAvailable = radar.sources.filter((source) => source.state !== "down").length;
 
   return (
@@ -518,7 +570,7 @@ function CodexPanel({
           <div className="row tiny muted">
             <span />
             <span>
-              {quotaUsable ? `${formatDateTime(quota.weeklyResetsAt)} 重置 · ${formatRemaining(quota.weeklyResetsAt, now)}` : DASH}
+              {quotaUsable ? `${formatBeijingDateTime(quota.weeklyResetsAt)}（北京时间）重置 · ${formatRemaining(quota.weeklyResetsAt, now)}` : DASH}
             </span>
           </div>
           {quota.authExpired ? (
@@ -575,8 +627,42 @@ function CodexPanel({
               {scanState === "scanning" ? "扫描中…" : "立即扫描"}
             </button>
           </div>
+
+          <div className="quote" data-testid="quota-reset-window">
+            <div className="row tiny">
+              <span className="muted">你的周额度窗口</span>
+              {justReset ? (
+                <span className="tag tone-strong" data-testid="just-reset">
+                  刚刚重置
+                </span>
+              ) : null}
+            </div>
+            {lastResetMs != null && sinceLastResetMs != null && sinceLastResetMs >= 0 ? (
+              <div className="row tiny">
+                <span className="muted">上次重置</span>
+                <span data-testid="last-reset-at">
+                  {formatBeijingDateTime(lastResetMs)}（北京时间）
+                </span>
+              </div>
+            ) : null}
+            {nextResetMs != null ? (
+              <div className="row tiny">
+                <span className="muted">下次重置</span>
+                <span data-testid="next-reset-at">
+                  {formatBeijingDateTime(nextResetMs)}（北京时间） · 余{" "}
+                  {formatRemaining(quota.weeklyResetsAt, now)}
+                </span>
+              </div>
+            ) : (
+              <div className="tiny muted">周额度重置时间未提供</div>
+            )}
+            {justReset ? (
+              <div className="tiny muted">本机周额度刚刚重置；社区公告可能滞后。</div>
+            ) : null}
+          </div>
+
           <div className="row tiny">
-            <span className="muted">每 1 分钟扫描</span>
+            <span className="muted">额度每 60 秒刷新 · 重置源每 60 秒扫描</span>
             <span data-testid="source-availability">
               {sourcesUsable ? `${sourcesAvailable}/${radar.sources.length} 来源可用` : DASH}
             </span>
@@ -597,8 +683,10 @@ function CodexPanel({
                 <SignalBadge tone={tone} />
               </div>
               <div className="tiny muted" data-testid="confirmation-state">
-                发布于 {formatDateTime(latest.publishedAt)} ·{" "}
-                {confirmed ? `来源已确认：${confirmations.join("、")}` : "单一来源"}
+                发布于 {formatBeijingDateTime(latest.publishedAt)}（北京时间） ·{" "}
+                {confirmed
+                  ? `来源已确认：${confirmations.join("、")}`
+                  : `单一来源：${latest.sourceName}`}
               </div>
               <div className="row tiny">
                 <span className="muted">适用范围</span>
@@ -619,7 +707,9 @@ function CodexPanel({
                 </span>
                 <SignalBadge tone={tone} />
               </div>
-              <div className="tiny muted">
+              <div className="tiny muted" data-testid="confirmation-state">
+                {formatBeijingDateTime(latest.publishedAt)}（北京时间） · {latest.sourceName} ·{" "}
+                {confirmed ? "来源已确认" : "单一来源"} ·{" "}
                 {tone === "incident"
                   ? "服务故障不等于额度重置"
                   : tone === "degraded"
@@ -632,9 +722,48 @@ function CodexPanel({
                 </button>
               )}
             </div>
+          ) : statusSignal ? (
+            <div className="quote" data-testid="reset-notice">
+              <div className="row tiny">
+                <span>{statusSignal.title}</span>
+                <SignalBadge tone={statusTone} />
+              </div>
+              <div className="tiny muted">
+                {formatBeijingDateTime(statusSignal.publishedAt)}（北京时间） ·{" "}
+                {statusSignal.sourceName} · 服务状态，不是重置记录
+              </div>
+              {statusSignal.url && (
+                <button className="link" onClick={() => host.current?.openURL(statusSignal.url!)}>
+                  查看来源 ↗
+                </button>
+              )}
+            </div>
           ) : (
-            <div className="tiny muted">暂未确认的重置记录</div>
+            <div className="tiny muted" data-testid="reset-empty">
+              最近 30 天没有社区重置记录
+            </div>
           )}
+
+          {forecastRelevant && latestForecast ? (
+            <div className="quote" data-testid="reset-forecast">
+              <div className="row tiny">
+                <span>{latestForecast.title}</span>
+                <span className="tag">预告</span>
+              </div>
+              <div className="tiny muted">
+                信号发布 {formatBeijingDateTime(latestForecast.publishedAt)}（北京时间） ·{" "}
+                {latestForecast.sourceName} · 单一来源；预计时间见原文
+              </div>
+              {latestForecast.summary && latestForecast.summary !== latestForecast.title ? (
+                <div className="tiny muted">{latestForecast.summary}</div>
+              ) : null}
+              {latestForecast.url && (
+                <button className="link" onClick={() => host.current?.openURL(latestForecast.url!)}>
+                  查看原帖 ↗
+                </button>
+              )}
+            </div>
+          ) : null}
 
           <div className="row tiny muted">
             <span>上次扫描 {sourcesUsable ? formatDateTime(radar.lastScanAt) : DASH}</span>
@@ -661,14 +790,18 @@ function CodexPanel({
               ))}
               {radar.recent.slice(0, 5).map((signal) => (
                 <div className="row tiny" key={signal.id}>
-                  <span className="muted">{formatDateTime(signal.publishedAt)}</span>
+                  <span className="muted">{formatBeijingDateTime(signal.publishedAt)}</span>
                   <span>{signal.title}</span>
                 </div>
               ))}
             </div>
           )}
-          <div className="tiny muted">系统通知未开启时，新动态仍在此处高亮。</div>
-          <div className="tiny muted">站点消息不等于个人额度恢复；无明确时间不推算倒计时。</div>
+          <div className="tiny muted">
+            社区公告是外部信息，不等于本机额度恢复；本机重置时间来自官方接口。
+          </div>
+          <div className="tiny muted">
+            可在设置 → 通知里开启重置前 15 分钟提醒；无明确时间的社区消息不推算倒计时。
+          </div>
         </Section>
 
         <Section id="model-health">

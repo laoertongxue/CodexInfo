@@ -9,10 +9,11 @@ private func appSnapshot(
     quotaPercent: Int? = nil,
     weeklyResetsAt: Date? = nil,
     radar: ResetRadarSnapshot = .empty,
-    cards: [ResetCredit] = []
+    cards: [ResetCredit] = [],
+    generatedAt: Date = fixtureNow
 ) -> UsageSnapshot {
     UsageSnapshot(
-        generatedAt: fixtureNow,
+        generatedAt: generatedAt,
         freshness: Freshness(quota: .fresh, session: .fresh, account: .fresh, sources: .fresh),
         quota: QuotaSnapshot(
             planType: "pro",
@@ -133,7 +134,7 @@ func registerAppTests() {
         }
     }
 
-    test("Notification events cover the four triggers of the spec") { context in
+    test("Notification events cover the weekly reset, reset signals, cards and low quota") { context in
         let signal = confirmedSignal()
         let radar = ResetRadarSnapshot(
             sources: [],
@@ -151,7 +152,7 @@ func registerAppTests() {
         )
         let snapshot = appSnapshot(
             quotaPercent: 7,
-            weeklyResetsAt: fixtureNow.addingTimeInterval(3 * 24 * 3600),
+            weeklyResetsAt: fixtureNow.addingTimeInterval(10 * 60),
             radar: radar,
             cards: [card]
         )
@@ -159,8 +160,98 @@ func registerAppTests() {
         let kinds = Set(events.map(\.kind))
         context.expectTrue(kinds.contains(.confirmedReset), "a confirmed reset raises an event")
         context.expectTrue(kinds.contains(.strongSignal), "a strong signal raises an event")
+        context.expectTrue(kinds.contains(.resetApproaching), "a reset within 15 minutes raises an event")
         context.expectTrue(kinds.contains(.cardExpiring), "a card that expires soon raises an event")
         context.expectTrue(kinds.contains(.lowQuota), "a low weekly quota raises an event")
+    }
+
+    test("The reset reminder key is stable across a one-second drift") { context in
+        let first = appSnapshot(
+            quotaPercent: 7,
+            weeklyResetsAt: fixtureNow.addingTimeInterval(10 * 60)
+        )
+        let second = appSnapshot(
+            quotaPercent: 7,
+            weeklyResetsAt: fixtureNow.addingTimeInterval(10 * 60 + 1)
+        )
+        let firstKey = NotificationEventEvaluator.events(snapshot: first, now: fixtureNow)
+            .first { $0.kind == .resetApproaching }?.key
+        let secondKey = NotificationEventEvaluator.events(snapshot: second, now: fixtureNow)
+            .first { $0.kind == .resetApproaching }?.key
+        context.expectTrue(firstKey != nil, "the reminder is raised inside the lead time")
+        context.expectEqual(firstKey, secondKey)
+    }
+
+    test("The reset reminder key does not split at the ISO week boundary") { context in
+        var calendar = Calendar(identifier: .iso8601)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        guard let boundary = calendar.date(
+            from: DateComponents(year: 2026, month: 10, day: 19, hour: 0, minute: 0, second: 0)
+        ) else {
+            context.fail("the boundary date was not built")
+            return
+        }
+        let now = boundary.addingTimeInterval(-5 * 60)
+        let first = appSnapshot(quotaPercent: 7, weeklyResetsAt: boundary)
+        let second = appSnapshot(
+            quotaPercent: 7, weeklyResetsAt: boundary.addingTimeInterval(-1)
+        )
+        let firstKey = NotificationEventEvaluator.events(snapshot: first, now: now)
+            .first { $0.kind == .resetApproaching }?.key
+        let secondKey = NotificationEventEvaluator.events(snapshot: second, now: now)
+            .first { $0.kind == .resetApproaching }?.key
+        context.expectTrue(firstKey != nil)
+        context.expectEqual(firstKey, secondKey)
+    }
+
+    test("Low quota keys stay stable for a week without a reset time") { context in
+        let first = appSnapshot(quotaPercent: 7)
+        let second = appSnapshot(
+            quotaPercent: 7,
+            generatedAt: fixtureNow.addingTimeInterval(3600)
+        )
+        let firstKey = NotificationEventEvaluator.events(snapshot: first, now: fixtureNow)
+            .first { $0.kind == .lowQuota }?.key
+        let secondKey = NotificationEventEvaluator.events(snapshot: second, now: fixtureNow)
+            .first { $0.kind == .lowQuota }?.key
+        context.expectTrue(firstKey != nil)
+        context.expectEqual(firstKey, secondKey)
+    }
+
+    test("Two resets in one week get different reminder keys") { context in
+        let firstReset = fixtureNow.addingTimeInterval(10 * 60)
+        let secondReset = fixtureNow.addingTimeInterval(4 * 86_400 + 10 * 60)
+        let first = appSnapshot(quotaPercent: 7, weeklyResetsAt: firstReset)
+        let second = appSnapshot(quotaPercent: 7, weeklyResetsAt: secondReset)
+        let firstKey = NotificationEventEvaluator.events(snapshot: first, now: fixtureNow)
+            .first { $0.kind == .resetApproaching }?.key
+        let secondKey = NotificationEventEvaluator.events(
+            snapshot: second,
+            now: fixtureNow.addingTimeInterval(4 * 86_400)
+        ).first { $0.kind == .resetApproaching }?.key
+        context.expectTrue(firstKey != nil)
+        context.expectTrue(secondKey != nil)
+        context.expectTrue(firstKey != secondKey)
+    }
+
+    test("Notification key history drops the oldest key, not the smallest string") { context in
+        let existing = (0..<200).map { "old-\($0)" }
+        let result = NotificationKeyHistory.appended(existing, fresh: ["new"])
+        context.expectEqual(result.count, 200)
+        context.expectEqual(result.first, "old-1")
+        context.expectEqual(result.last, "new")
+        context.expectEqual(NotificationKeyHistory.appended(["a", "b"], fresh: ["a"]), ["a", "b"])
+    }
+
+    test("The reset reminder does not invent a zero quota") { context in
+        let snapshot = appSnapshot(
+            quotaPercent: nil,
+            weeklyResetsAt: fixtureNow.addingTimeInterval(10 * 60)
+        )
+        let event = NotificationEventEvaluator.events(snapshot: snapshot, now: fixtureNow)
+            .first { $0.kind == .resetApproaching }
+        context.expectTrue(event?.body.contains("—") == true)
+        context.expectTrue(event?.body.contains("0%") == false)
     }
 
     test("Notification events fire only once") { context in
@@ -201,5 +292,6 @@ func registerAppTests() {
         context.expectTrue(!kinds.contains(.strongSignal), "a plain reset is not a strong signal")
         context.expectTrue(!kinds.contains(.cardExpiring), "a card that expires in two days is quiet")
         context.expectTrue(!kinds.contains(.lowQuota), "a healthy quota is quiet")
+        context.expectTrue(!kinds.contains(.resetApproaching), "a reset far away is quiet")
     }
 }

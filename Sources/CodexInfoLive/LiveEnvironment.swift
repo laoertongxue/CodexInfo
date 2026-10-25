@@ -99,6 +99,12 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
         }
         let quota = QuotaService(official: official, fallback: CompositeQuotaFallback(quotaFallbacks))
         let account = AccountUsageService(official: official, sessions: repository)
+        let now = Date()
+        // A restart must not erase the last known reset while the feeds are
+        // down or only return their short page. The app snapshot is the seed;
+        // the MCP falls back to its own file when the app never ran.
+        let seed = (try? appStore.load(maxAge: ResetRadarService.maxSignalAge, now: now))?.resetRadar
+            ?? (try? store.load(maxAge: ResetRadarService.maxSignalAge, now: now))?.resetRadar
         let radar = ResetRadarService(
             sources: [
                 CodexRadarCurrentSource(),
@@ -106,7 +112,8 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
                 CodexResetsSource(),
                 OpenAIStatusSource(),
             ],
-            http: radarHTTP
+            http: radarHTTP,
+            seed: seed
         )
         let builder = SnapshotBuilder(
             quota: quota, credits: credits, sessions: repository, account: account, radar: radar

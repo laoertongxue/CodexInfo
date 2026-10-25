@@ -36,8 +36,10 @@ public struct CodexRadarCurrentSource: ResetSource {
         let title = record["title_zh"] as? String ?? "Codex 重置完成"
         let summary = record["evidence_zh"] as? String ?? record["message"] as? String ?? ""
         let scope = window?["scope"] as? String ?? "Codex 用户"
+        let eventID = (record["event_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let identity = eventID ?? "\(title):\(record["occurred_on"] as? String ?? "")"
         return [ResetSignal(
-            id: "\(id):\(title):\(record["occurred_on"] as? String ?? "")",
+            id: "\(id):\(identity)",
             sourceId: id,
             sourceName: displayName,
             kind: .reset,
@@ -73,6 +75,7 @@ public struct CodexRadarCurrentSource: ResetSource {
             "status": window["status"] as? String ?? "",
             "confirmation_level": window["confirmation_level"] as? String ?? "",
             "occurred_on": window["occurred_on"] as? String ?? "",
+            "event_id": window["event_id"] as? String ?? "",
             "title_zh": window["title"] as? String ?? "",
             "message": window["message"] as? String ?? "",
             "source_url": window["source_url"] as? String ?? "",

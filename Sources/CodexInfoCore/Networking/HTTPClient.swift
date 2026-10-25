@@ -122,19 +122,6 @@ public struct URLSessionHTTPClient: HTTPClient {
         self.hosts = hosts
     }
 
-    /// Creates a client with a session of the caller.
-    ///
-    /// The caller owns the session, so the session has to carry the redirect
-    /// delegate of the allow-list.
-    ///
-    /// - Parameters:
-    ///   - session: the session of the requests.
-    ///   - hosts: the allowed hosts.
-    public init(session: URLSession, hosts: Set<String> = NetworkAllowList.defaultHosts) {
-        self.session = session
-        self.hosts = hosts
-    }
-
     public func send(_ request: URLRequest) async throws -> HTTPResponse {
         // The host of the request is checked before the request leaves the
         // process, so a source outside the allow-list never sees a byte.

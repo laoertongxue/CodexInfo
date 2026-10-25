@@ -39,9 +39,13 @@ public struct CodexResetsSource: ResetSource {
             ))
         }
         for tweet in root["tweets"] as? [[String: Any]] ?? [] {
-            guard (tweet["explicit_reset_claim"] as? Bool) == true,
+            // A `signal` tweet is a forecast even when the payload does not
+            // mark it as an explicit reset claim (`By midnight PST`).
+            let explicitClaim = (tweet["explicit_reset_claim"] as? Bool) == true
+            let isSignal = (tweet["kind"] as? String) == "signal"
+            guard explicitClaim || isSignal,
                   let text = tweet["text"] as? String else { continue }
-            let verified = Self.isConfirmed(tweet["reset_verification_status"] as? String)
+            let verified = explicitClaim && Self.isConfirmed(tweet["reset_verification_status"] as? String)
             // A claim that the payload does not confirm is still a claim, not
             // a completed reset.
             let kind: ResetSignalKind = verified ? .reset : .verifying

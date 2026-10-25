@@ -95,6 +95,10 @@ export interface UsageSnapshot {
     planType?: string | null;
     weeklyRemainingPercent?: number | null;
     weeklyResetsAt?: string | null;
+    /** The length of the weekly window, used to derive the previous reset. */
+    weeklyWindowMinutes?: number | null;
+    /** The current window's start, when the snapshot carries it. */
+    weeklyWindowStartedAt?: string | null;
     source: string;
     fetchedAt: string;
   };
@@ -143,6 +147,10 @@ export interface UsageSnapshot {
   resetRadar: {
     sources: Array<{ sourceId: string; sourceName: string; state: SourceState; lastSuccessAt?: string | null; lastError?: string | null; nextScanAt?: string | null }>;
     latestConfirmed?: ResetSignal | null;
+    /** The newest reset record, even from a single source. */
+    latestReset?: ResetSignal | null;
+    /** The newest forecast, even when it was merged into a reset group. */
+    latestForecast?: ResetSignal | null;
     recent: ResetSignal[];
     lastScanAt?: string | null;
     nextScanAt?: string | null;
