@@ -25,13 +25,14 @@
   }
 }
 * { box-sizing: border-box; }
-html, body, #root { margin: 0; min-height: 100%; background: transparent; color: var(--fg); }
+html, body, #root { margin: 0; background: transparent; color: var(--fg); }
 .panel { width: 340px; max-height: 780px; display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 18px 48px rgba(0,0,0,.18); overflow: hidden; font-size: 12px; line-height: 1.5; }
 .panel.loading, .panel.error { padding: 24px; }
 .header { display: flex; align-items: center; gap: 6px; padding: 12px 14px 8px; }
 .title { font-size: 16px; }
 .badge { border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; color: var(--muted); font-size: 9px; line-height: 15px; }
 .ghost { border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--fg); height: 22px; padding: 0 7px; font-size: 10px; cursor: pointer; }
+.ghost:disabled { opacity: .55; cursor: default; }
 .close { margin-left: auto; border: 0; background: transparent; color: var(--muted); font-size: 16px; cursor: pointer; }
 .body { overflow: auto; padding: 0 14px; }
 .body section { border-top: 1px solid var(--line); padding: 9px 0 8px; }

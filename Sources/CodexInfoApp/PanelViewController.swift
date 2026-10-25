@@ -10,6 +10,8 @@ import CodexInfoCore
 final class PanelViewController: NSViewController, WKScriptMessageHandler, WKNavigationDelegate {
     /// The message the panel sends when it is ready for the first snapshot.
     var onMessage: ((PanelMessage) -> Void)?
+    /// The height of the content of the panel, in points.
+    var onContentHeightChange: ((CGFloat) -> Void)?
 
     private let webView: WKWebView
 
@@ -55,6 +57,16 @@ final class PanelViewController: NSViewController, WKScriptMessageHandler, WKNav
     func render(_ snapshot: UsageSnapshot) {
         guard let json = Self.json(snapshot) else { return }
         webView.evaluateJavaScript("window.CodexInfoHost && window.CodexInfoHost.render(\(json));")
+        measureContent()
+    }
+
+    /// Reports the height of the content, so the popover is exactly as tall as
+    /// the panel and never leaves empty space below it.
+    func measureContent() {
+        webView.evaluateJavaScript("document.documentElement.scrollHeight") { [weak self] value, _ in
+            guard let height = value as? Double, height > 0 else { return }
+            Task { @MainActor in self?.onContentHeightChange?(CGFloat(height)) }
+        }
     }
 
     /// Reports an error to the page.
@@ -75,6 +87,10 @@ final class PanelViewController: NSViewController, WKScriptMessageHandler, WKNav
     ///
     /// A link of the panel is opened in the system browser, so the panel
     /// never navigates away from the built page.
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        measureContent()
+    }
+
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,

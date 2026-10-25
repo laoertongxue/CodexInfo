@@ -23,6 +23,7 @@ final class MenuBarController: NSObject {
         super.init()
 
         panel.onMessage = { [weak self] message in self?.handle(message) }
+        panel.onContentHeightChange = { [weak self] height in self?.resizePopover(to: height) }
         popover.contentViewController = panel
         popover.contentSize = NSSize(width: 340, height: 780)
         popover.behavior = .transient
@@ -61,6 +62,14 @@ final class MenuBarController: NSObject {
         let title = StatusTitleFormatter.format(snapshot, segments: segments)
         statusItem.button?.attributedTitle = attributedTitle(title)
         panel.render(snapshot)
+    }
+
+    /// Keeps the popover as tall as the panel, so no empty space is left
+    /// below the content.
+    private func resizePopover(to height: CGFloat) {
+        let clamped = min(max(height, 320), 780)
+        guard abs(popover.contentSize.height - clamped) > 1 else { return }
+        popover.contentSize = NSSize(width: 340, height: clamped)
     }
 
     /// Opens the panel, or closes it when it is open.

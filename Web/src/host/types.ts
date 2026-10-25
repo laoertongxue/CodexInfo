@@ -26,7 +26,7 @@ export interface Host {
   start(handlers: HostHandlers): Promise<void>;
   stop(): void;
   refresh(): void;
-  scan(): void;
+  scan(): Promise<void>;
   openURL(url: string): void;
   openSettings(): void;
   close(): void;

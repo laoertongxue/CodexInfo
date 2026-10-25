@@ -41,7 +41,7 @@ export class NativeHost implements Host {
     post("refresh");
   }
 
-  scan() {
+  async scan(): Promise<void> {
     post("scan");
   }
 

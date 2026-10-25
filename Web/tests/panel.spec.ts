@@ -184,3 +184,23 @@ test("an expired login asks the user to sign in again", async ({ page }) => {
   await expect(page.getByTestId("login-hint")).toContainText("登录已失效");
   await expect(page.getByTestId("weekly-quota")).toContainText("84%");
 });
+
+test("a scan shows a running state and then its result", async ({ page }) => {
+  await page.goto("/");
+  const button = page.getByTestId("scan-button");
+  await expect(button).toHaveText("立即扫描");
+  await button.click();
+  await expect(button).toHaveText("扫描中…");
+  await expect(page.getByTestId("scan-status")).toContainText("扫描完成");
+});
+
+test("the panel leaves no empty space below its content", async ({ page }) => {
+  await page.goto("/");
+  await page.getByTestId("panel").waitFor();
+  const gap = await page.evaluate(() => {
+    const root = document.getElementById("root")!.getBoundingClientRect().height;
+    const panel = document.querySelector("[data-testid='panel']")!.getBoundingClientRect().height;
+    return root - panel;
+  });
+  expect(gap).toBeLessThan(4);
+});

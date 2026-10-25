@@ -89,7 +89,7 @@ export class McpHost implements Host {
     }
   }
 
-  async scan() {
+  async scan(): Promise<void> {
     try {
       await this.app.callServerTool({ name: "scan_reset_sources", arguments: {} });
     } catch {

@@ -27,10 +27,15 @@ export class MockHost implements Host {
   }
 
   refresh() {
-    this.handlers?.onSnapshot(selectedSnapshot());
+    // A fresh object, so the panel sees a new snapshot like the real hosts do.
+    this.handlers?.onSnapshot({ ...selectedSnapshot() });
   }
 
-  scan() {}
+  async scan() {
+    await new Promise((resolve) => window.setTimeout(resolve, 800));
+    // A fresh object, so the panel sees a new snapshot like the real hosts do.
+    this.handlers?.onSnapshot({ ...selectedSnapshot() });
+  }
 
   openURL(url: string) {
     window.open(url, "_blank", "noopener,noreferrer");

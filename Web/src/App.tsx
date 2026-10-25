@@ -143,10 +143,42 @@ function Panel({
 
   const [healthOpen, setHealthOpen] = useState(health.status !== "normal");
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [scanState, setScanState] = useState<"idle" | "scanning" | "done" | "error">("idle");
+  const [scanMessage, setScanMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (health.status !== "normal") setHealthOpen(true);
   }, [health.status]);
+
+  // A scan is finished when the next snapshot arrives: the app and the MCP
+  // server both publish one after the sources were read.
+  useEffect(() => {
+    if (scanState !== "scanning") return;
+    setScanState("done");
+    setScanMessage(`扫描完成 · ${radar.sources.filter((source) => source.state !== "down").length}/${radar.sources.length} 来源可用`);
+    const timer = window.setTimeout(() => {
+      setScanState("idle");
+      setScanMessage(null);
+    }, 4000);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot]);
+
+  const onScan = async () => {
+    setScanState("scanning");
+    setScanMessage(null);
+    try {
+      await host.current?.scan();
+    } catch {
+      setScanState("error");
+      setScanMessage("扫描失败，请稍后重试");
+      const timer = window.setTimeout(() => {
+        setScanState("idle");
+        setScanMessage(null);
+      }, 4000);
+      return () => window.clearTimeout(timer);
+    }
+  };
 
   const quotaUsable = usable(snapshot.freshness.quota);
   const sessionUsable = usable(snapshot.freshness.session);
@@ -259,8 +291,13 @@ function Panel({
             <strong>
               重置追踪 <FreshnessHint state={snapshot.freshness.sources} />
             </strong>
-            <button className="ghost" onClick={() => host.current?.scan()}>
-              立即扫描
+            <button
+              className="ghost"
+              data-testid="scan-button"
+              disabled={scanState === "scanning"}
+              onClick={onScan}
+            >
+              {scanState === "scanning" ? "扫描中…" : "立即扫描"}
             </button>
           </div>
           <div className="row tiny">
@@ -269,6 +306,11 @@ function Panel({
               {sourcesUsable ? `${sourcesAvailable}/${radar.sources.length} 来源可用` : DASH}
             </span>
           </div>
+          {scanState === "scanning" || scanMessage ? (
+            <div className="tiny muted" data-testid="scan-status">
+              {scanState === "scanning" ? "扫描中…" : scanMessage}
+            </div>
+          ) : null}
 
           {latest && tone === "strong" ? (
             <div className="quote" data-testid="reset-confirmation">
