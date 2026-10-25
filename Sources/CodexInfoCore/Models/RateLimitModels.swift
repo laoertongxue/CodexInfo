@@ -40,34 +40,56 @@ public struct RateLimitSnapshot: Codable, Equatable, Sendable {
 }
 
 public enum RateLimitPayloadDecoder {
-    public static func snapshot(from object: [String: Any]) -> RateLimitSnapshot? {
-        guard object["limit_id"] != nil || object["limitId"] != nil || object["primary"] != nil else { return nil }
+    /// Decodes a rate-limit payload.
+    ///
+    /// Two shapes are in the wild: the session log publishes `rate_limits` with
+    /// `primary`/`secondary` windows, while the official endpoint publishes
+    /// `rate_limit` with `primary_window`/`secondary_window`, a window length
+    /// in seconds and the reset as an epoch or as a remaining duration.
+    public static func snapshot(from object: [String: Any], now: Date = Date()) -> RateLimitSnapshot? {
+        let primaryObject = object["primary"] as? [String: Any]
+            ?? object["primary_window"] as? [String: Any]
+            ?? object["primaryWindow"] as? [String: Any]
+        let secondaryObject = object["secondary"] as? [String: Any]
+            ?? object["secondary_window"] as? [String: Any]
+            ?? object["secondaryWindow"] as? [String: Any]
+        guard object["limit_id"] != nil || object["limitId"] != nil
+                || primaryObject != nil || secondaryObject != nil else { return nil }
         return RateLimitSnapshot(
             limitId: object["limit_id"] as? String ?? object["limitId"] as? String,
-            primary: window(object["primary"] as? [String: Any]),
-            secondary: window(object["secondary"] as? [String: Any]),
+            primary: window(primaryObject, now: now),
+            secondary: window(secondaryObject, now: now),
             planType: object["plan_type"] as? String ?? object["planType"] as? String
         )
     }
 
-    public static func snapshotMap(from object: [String: Any]) -> [String: RateLimitSnapshot] {
+    public static func snapshotMap(from object: [String: Any], now: Date = Date()) -> [String: RateLimitSnapshot] {
         var result: [String: RateLimitSnapshot] = [:]
         for (key, value) in object {
-            if let dictionary = value as? [String: Any], let snapshot = snapshot(from: dictionary) {
+            if let dictionary = value as? [String: Any], let snapshot = snapshot(from: dictionary, now: now) {
                 result[key] = snapshot
             }
         }
         return result
     }
 
-    private static func window(_ object: [String: Any]?) -> RateLimitWindow? {
+    private static func window(_ object: [String: Any]?, now: Date) -> RateLimitWindow? {
         guard let object else { return nil }
         let used = number(object["used_percent"]) ?? number(object["usedPercent"])
         guard let used else { return nil }
+        let minutes = (number(object["window_minutes"]) ?? number(object["windowDurationMins"]))?.doubleValue
+            ?? number(object["limit_window_seconds"]).flatMap { $0.doubleValue / 60 }
+            ?? number(object["limitWindowSeconds"]).flatMap { $0.doubleValue / 60 }
+        var resetsAt = (number(object["resets_at"]) ?? number(object["resetsAt"]))?.intValue
+            ?? number(object["reset_at"])?.intValue
+        if resetsAt == nil, let after = number(object["reset_after_seconds"])?.doubleValue
+            ?? number(object["resetAfterSeconds"])?.doubleValue {
+            resetsAt = Int(now.addingTimeInterval(after).timeIntervalSince1970)
+        }
         return RateLimitWindow(
             usedPercent: used.doubleValue,
-            windowDurationMins: (number(object["window_minutes"]) ?? number(object["windowDurationMins"]))?.doubleValue,
-            resetsAt: (number(object["resets_at"]) ?? number(object["resetsAt"]))?.intValue
+            windowDurationMins: minutes,
+            resetsAt: resetsAt
         )
     }
 

@@ -24,20 +24,22 @@ public actor QuotaService: QuotaSnapshotProviding {
             return cache
         }
         var authExpired = false
+        var officialSnapshot: QuotaSnapshot?
         do {
-            let usage = try await official.fetchUsage()
+            let usage = try await official.fetchUsage(now: now)
             let snapshotBucket = RateLimitBucketSelector.select(usage.rateLimitsByLimitID) ?? usage.rateLimits
             let weekly = snapshotBucket.flatMap(RateLimitWindowSelector.weekly)
-            let snapshot = QuotaSnapshot(
-                planType: usage.planType ?? snapshotBucket?.planType,
-                weeklyRemainingPercent: weekly?.remainingPercent,
-                weeklyResetsAt: weekly?.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
-                source: .official,
-                fetchedAt: now
-            )
-            cache = snapshot
-            cachedAt = now
-            return snapshot
+            if let weekly {
+                officialSnapshot = QuotaSnapshot(
+                    planType: usage.planType ?? snapshotBucket?.planType,
+                    weeklyRemainingPercent: weekly.remainingPercent,
+                    weeklyResetsAt: weekly.resetsAt.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                    source: .official,
+                    fetchedAt: now
+                )
+            }
+            // A response without a weekly window carries no quota, so the
+            // fallback below provides it instead of publishing an empty value.
         } catch OfficialUsageError.unauthorized {
             // The login expired: the session fallback may still answer, but the
             // panel has to tell the user to sign in again.
@@ -46,6 +48,11 @@ public actor QuotaService: QuotaSnapshotProviding {
             authExpired = true
         } catch {
             authExpired = false
+        }
+        if let officialSnapshot {
+            cache = officialSnapshot
+            cachedAt = now
+            return officialSnapshot
         }
         if let fallbackSnapshot = await fallback?.fallbackQuota(now: now) {
             let snapshot = QuotaSnapshot(

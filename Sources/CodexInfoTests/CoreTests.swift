@@ -2295,6 +2295,53 @@ func registerCoreTests() {
         context.expectTrue(standard.health.status != .normal)
         context.expectTrue(conservative.health.status == .normal || conservative.health.status == .insufficient)
     }
+
+    test("Official client decodes the rate_limit payload of the endpoint") { context in
+        let payload = #"{"user_id":"u","account_id":"a","plan_type":"pro","rate_limit":{"allowed":true,"limit_reached":false,"primary_window":{"used_percent":29,"limit_window_seconds":604800,"reset_after_seconds":492981,"reset_at":1793382111},"secondary_window":null}}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: payload.data(using: .utf8)!, statusCode: 200))
+        let client = OfficialUsageClient(
+            http: http,
+            credentials: StubCredentials(token: "tok_test"),
+            baseURL: URL(string: "https://chatgpt.com/backend-api")!
+        )
+        let usage = try await client.fetchUsage(now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(usage.planType, "pro")
+        let weekly = usage.rateLimits.flatMap(RateLimitWindowSelector.weekly)
+        context.expectEqual(weekly?.remainingPercent, 71)
+        context.expectEqual(weekly?.resetsAt, 1_793_382_111)
+    }
+
+    test("Official client reads the reset time from the remaining duration") { context in
+        let payload = #"{"plan_type":"pro","rate_limit":{"primary_window":{"used_percent":50,"limit_window_seconds":604800,"reset_after_seconds":3600}}}"#
+        let http = MockHTTPClient(response: HTTPResponse(data: payload.data(using: .utf8)!, statusCode: 200))
+        let client = OfficialUsageClient(
+            http: http,
+            credentials: StubCredentials(token: "tok_test"),
+            baseURL: URL(string: "https://chatgpt.com/backend-api")!
+        )
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let usage = try await client.fetchUsage(now: now)
+        let weekly = usage.rateLimits.flatMap(RateLimitWindowSelector.weekly)
+        context.expectEqual(weekly?.remainingPercent, 50)
+        context.expectEqual(weekly?.resetsAt, 1_790_003_600)
+    }
+
+    test("Quota service falls back when the official read has no weekly window") { context in
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let client = OfficialUsageClient(
+            http: MockHTTPClient(response: HTTPResponse(data: #"{"plan_type":"pro"}"#.data(using: .utf8)!, statusCode: 200)),
+            credentials: StubCredentials(token: "tok_test"),
+            baseURL: URL(string: "https://chatgpt.com/backend-api")!
+        )
+        let fallback = StubQuotaFallback(snapshot: QuotaSnapshot(
+            planType: "pro", weeklyRemainingPercent: 84, weeklyResetsAt: nil,
+            source: .session, fetchedAt: now
+        ))
+        let service = QuotaService(official: client, fallback: fallback)
+        let snapshot = await service.quotaSnapshot(now: now)
+        context.expectEqual(snapshot?.weeklyRemainingPercent, 84)
+        context.expectEqual(snapshot?.source, .session)
+    }
 }
 
 /// A source that always returns the same signals.

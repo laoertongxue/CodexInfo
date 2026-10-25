@@ -23,7 +23,7 @@ public struct OfficialUsageClient: Sendable {
         self.baseURL = baseURL
     }
 
-    public func fetchUsage() async throws -> OfficialUsage {
+    public func fetchUsage(now: Date = Date()) async throws -> OfficialUsage {
         let request = try authorizedRequest(path: "/wham/usage")
         let response = try await http.send(request)
         guard response.statusCode != 401, response.statusCode != 403 else { throw OfficialUsageError.unauthorized }
@@ -31,7 +31,7 @@ public struct OfficialUsageClient: Sendable {
         guard let object = try JSONSerialization.jsonObject(with: response.data) as? [String: Any] else {
             throw OfficialUsageError.invalidPayload
         }
-        return try Self.decodeUsage(object)
+        return try Self.decodeUsage(object, now: now)
     }
 
     /// Fetches the official per-day token usage breakdown and returns the token
@@ -93,14 +93,20 @@ public struct OfficialUsageClient: Sendable {
         return request
     }
 
-    static func decodeUsage(_ object: [String: Any]) throws -> OfficialUsage {
+    static func decodeUsage(_ object: [String: Any], now: Date = Date()) throws -> OfficialUsage {
         let planType = object["plan_type"] as? String ?? object["planType"] as? String
         let rateLimitsObject = object["rate_limits"] as? [String: Any]
             ?? object["rateLimits"] as? [String: Any]
-        let rateLimits = rateLimitsObject.flatMap(RateLimitPayloadDecoder.snapshot)
+        // The official endpoint publishes one limit under `rate_limit` with
+        // `primary_window`/`secondary_window`; the session log publishes
+        // `rate_limits` with `primary`/`secondary`.
+        let singularObject = object["rate_limit"] as? [String: Any]
+            ?? object["rateLimit"] as? [String: Any]
+        let rateLimits = rateLimitsObject.flatMap { RateLimitPayloadDecoder.snapshot(from: $0, now: now) }
+            ?? singularObject.flatMap { RateLimitPayloadDecoder.snapshot(from: $0, now: now) }
         let byIDObject = object["rate_limits_by_limit_id"] as? [String: Any]
             ?? object["rateLimitsByLimitId"] as? [String: Any]
-        let byID = byIDObject.map(RateLimitPayloadDecoder.snapshotMap) ?? [:]
+        let byID = byIDObject.map { RateLimitPayloadDecoder.snapshotMap(from: $0, now: now) } ?? [:]
         return OfficialUsage(planType: planType, rateLimits: rateLimits, rateLimitsByLimitID: byID)
     }
 

@@ -32,8 +32,8 @@ public actor CodexAppServerClient {
     public func readRateLimits() async throws -> AppServerRateLimits {
         try await ensureInitialized()
         let result = try await transport.request(method: "account/rateLimits/read", params: [:])
-        let snapshot = (result["rateLimits"] as? [String: Any]).flatMap(RateLimitPayloadDecoder.snapshot)
-        let byID = (result["rateLimitsByLimitId"] as? [String: Any]).map(RateLimitPayloadDecoder.snapshotMap) ?? [:]
+        let snapshot = (result["rateLimits"] as? [String: Any]).flatMap { RateLimitPayloadDecoder.snapshot(from: $0) }
+        let byID = (result["rateLimitsByLimitId"] as? [String: Any]).map { RateLimitPayloadDecoder.snapshotMap(from: $0) } ?? [:]
         return AppServerRateLimits(rateLimits: snapshot, rateLimitsByLimitID: byID)
     }
 
