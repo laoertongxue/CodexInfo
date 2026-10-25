@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import type { UsageSnapshot } from "../data/types";
+import type { ClientUsageSnapshot, UsageSnapshot } from "../data/types";
 import { detectHost } from "./detect";
 import type { Host } from "./types";
 
 /** Connects the panel to the host that pushes the snapshot into the page. */
 export function useHost() {
   const [snapshot, setSnapshot] = useState<UsageSnapshot | null>(null);
+  const [clients, setClients] = useState<ClientUsageSnapshot[]>([]);
+  const [selection, setSelection] = useState<{ client: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Host["mode"]>("mock");
   const hostRef = useRef<Host | null>(null);
@@ -17,11 +19,13 @@ export function useHost() {
     host
       .start({
         onSnapshot: setSnapshot,
+        onClients: setClients,
+        onSelectClient: (client) => setSelection({ client }),
         onError: setError,
       })
       .catch((reason) => setError(String(reason)));
     return () => host.stop();
   }, []);
 
-  return { snapshot, error, mode, host: hostRef };
+  return { snapshot, clients, selection, error, mode, host: hostRef };
 }

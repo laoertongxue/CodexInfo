@@ -19,7 +19,7 @@ CodexInfo 复刻截图中的 Codex 用量弹层，并补充两项判断：
 - **macOS 菜单栏常驻 App**：常驻条显示 `额度 · 速率 · 模型状态`，点击展开完整面板。
 - **Codex 桌面版插件**：MCP server + MCP App 面板 + skill，让 Codex 内也能查看同一份快照并唤起菜单栏面板。
 
-第三方插件不能向 Codex 底部状态栏注入自定义 chip，因此底部额度 chip 保持 Codex 原生，常驻入口由菜单栏承担。
+第三方插件不能向 Codex 底部状态栏注入自定义 chip，因此底部额度 chip 保持 Codex 原生，常驻入口由菜单栏承担。菜单栏 App 另在 ChatGPT / Qoder / DeepSeek Harness / MiniMax Code 的输入区叠加一个可点击的悬浮贴片，显示该客户端自己的额度或余额；贴片是独立窗口，不修改客户端；单击打开菜单栏面板并选中该客户端。
 
 ## 1. 背景与目标
 
@@ -43,12 +43,13 @@ CodexInfo 复刻截图中的 Codex 用量弹层，并补充两项判断：
 - 官方额度、重置卡、账号 Token；本地会话 Token、上下文、输出速率。
 - 本地 7 天降智基线。
 - 四源重置追踪、来源健康、交叉确认、通知。
+- 四个客户端的可点击悬浮贴片：ChatGPT / Codex、Qoder、DeepSeek Harness、MiniMax Code 各显示自己的额度或余额；单击打开面板对应标签。
 - 浅色/深色面板；设置、开机启动、安装脚本、测试与验收。
 
 ### 2.2 明确不做
 
 - 自动使用重置卡、自动购买、代用户执行任何额度操作。
-- 注入或修改 Codex 客户端 UI、底部状态栏、`app.asar`。
+- 修改客户端包（`app.asar`）、注入客户端 DOM 或读写客户端进程；悬浮贴片只是叠加的独立窗口，不改变客户端。
 - 读取、存储、展示、上传对话正文或工具输出内容。
 - Windows / Linux、Codex CLI TUI 集成、移动端。
 - 团队/工作区账号、多账号切换。
@@ -77,8 +78,55 @@ CodexInfo 复刻截图中的 Codex 用量弹层，并补充两项判断：
 | 菜单栏 App | `NSStatusItem` + `NSPopover` + `WKWebView` | 常驻、通知、完整面板、设置 |
 | Codex 插件 | MCP server + MCP App + skill | Codex 内查询、渲染同一面板、唤起菜单栏 |
 
-- 不注入 Codex 底部状态栏；底部原生额度 chip 保持不动。
+- 不修改 Codex 底部状态栏；底部原生额度 chip 保持不动。
 - 两个入口共用 `CodexInfoCore` 与同一份单文件 HTML，禁止两套口径。
+
+### 4.1.1 客户端悬浮贴片
+
+| 项 | 设计 |
+| --- | --- |
+| 形态 | 24pt 高的浅灰填充、无描边、可点击 `NSPanel`，显示在客户端 composer 的模型选择器左侧；单击打开菜单栏面板并选中该客户端。 |
+| 显示条件 | 对应客户端在前台、有可见窗口；贴片不抢焦点；单击打开面板并选中该客户端，不把点击传给 composer。 |
+| 跟随 | 有辅助功能权限时按原生模型选择器的真实 AX frame 定位：贴片右侧距选择器 AX 文本 frame 24pt（选择器悬停底色向 frame 左侧延伸约 10pt，视觉间距约 14pt），垂直中心对齐；无权限时 Codex / DeepSeek 按最大可见窗口右下角估算，Qoder / MiniMax 贴片隐藏。0.35s 跟随窗口/选择器移动。 |
+| 开关 | 设置 →「客户端贴片」；默认开，关闭后立即隐藏所有贴片 |
+
+精确对齐的权限：
+
+- 设置 →「客户端贴片」→「授权…」打开系统辅助功能授权，授权后重启 CodexInfo。
+- 未授权时 Codex / DeepSeek 使用已校准的窗口估算；Qoder 分栏布局和 MiniMax 拥挤行没有可靠的窗口回退，贴片隐藏，授权后才显示。
+- 精确模式只读取模型选择器/输入框的角色、控件标签（用于区分模型选择器与发送/停止）和 frame，不读取对话正文。
+
+各客户端的数据口径：
+
+| 客户端 | 数据源 | 显示 |
+| --- | --- | --- |
+| ChatGPT / Codex | 现有 `UsageSnapshot` | `额度 71% · 45 tok/s` / `会话 —` |
+| Qoder | `~/Library/Application Support/com.qodercn.app.stable/logs/**/main*.log` 中最后一条 `[AccountUsage] 用量响应摘要` | `额度 50% · 会话 —`；剩余 % = `1 - qoderUsage.totalUsagePercentage`，旧行回落到两个 quota 的 remaining/total。面板分段显示 `userQuota`（套餐内 Credits）与 `addOnQuota`（资源包）的已用/总数、接口 `percentage`、剩余点数与 `expiresAt` 刷新时间 |
+| DeepSeek Harness | `~/.dsh/.credentials.yaml` 的 `deepseek-account-platform/default` grant；`GET https://platform.deepseek.com/api/v0/users/get_user_summary`（`x-dsh-auth-token`） | `余额 ¥41.60 · 会话 —`；normal + bonus 钱包合计，按 CNY/USD 显示 |
+| MiniMax Code | `~/.minimax/auth/prod/cn/mcode-public/auth.json` 的 OAuth；`GET https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains`（Bearer）；`GET https://www.minimaxi.com/backend/account/reset_card/list?page=1&size=20`（同 Bearer） | `额度 93% · 会话 —`；周额度取 `model_remains[model_name=general].current_weekly_remaining_percent`，5 小时额度取 `current_interval_remaining_percent`，两个窗口按 `weekly_boost_permille/10`（缺省 100）换算已用/总点数；重置时间取 `end_time/weekly_end_time`；重置卡取 `cards[].card_id/source_type/expire_time/create_time` 与 `total`（list 已是可用卡，已用卡只在 flows；只展示不使用） |
+
+约束：
+
+- Qoder 的凭证是加密的 Chromium 存储，因此只读它自己打印的用量日志，不读凭证、不发网络请求；日志行取 `[ISO8601]` 时间戳，按文件 mtime/size 缓存，尾部按 4/16/64MB 递进并在行边界解码；额度随 Qoder 自身刷新日志而更新。
+- DeepSeek / MiniMax 的令牌只驻留内存、只发往各自官方域；不写日志、不落缓存。
+- 官方、radar、DeepSeek、MiniMax 各自使用独立 host 集合的 HTTP client；重定向只允许回到同一来源的 host，令牌不会跟到另一家。
+- 非 Codex 贴片保留占位 `会话 —`（Codex 显示真实会话速率）；MiniMax 的正确选择器左侧有空白，完整贴片可以放下。面板始终有完整信息。
+- 贴片不修改客户端、不注入 DOM，因此客户端自动更新不会覆盖它。
+
+### 4.1.2 面板客户端切换
+
+原生菜单栏面板在头部下方有一行四标签：Codex / Qoder / MiniMax / DeepSeek；MCP 插件内不显示这行标签（插件只拿得到 Codex 快照）。
+
+| 客户端 | 面板内容 |
+| --- | --- |
+| Codex | 4.2 的完整面板 |
+| Qoder | 套餐内 Credits 与资源包（已用/总数、已使用 %、剩余点数、进度条；套餐内带刷新时间与倒计时）、本地用量日志来源、更新时间；没有模型数据时隐藏模型块 |
+| MiniMax | 5 小时限额与周限额（已用/总点数、进度条、各自重置时间与倒计时）、重置卡（张数/类型/到期，只读展示）、模型/档位、官方额度接口来源 |
+| DeepSeek | 钱包余额（normal + bonus，含赠送）、模型/档位、官方钱包来源 |
+
+- 头部「刷新」和 30 秒自动刷新同时刷新 Codex 快照与三个客户端；客户端数据由 `ClientUsageStore` 统一读取，面板与悬浮贴片共用同一份快照。
+- 客户端面板按内容收缩（最小 200pt），不留底部空白；Codex 面板高度不变。
+- 标签选择在当前面板页面内保持；页面重载/应用重启后默认回到 Codex。
 
 ### 4.2 面板布局（B 版）
 
@@ -97,6 +145,7 @@ CodexInfo 复刻截图中的 Codex 用量弹层，并补充两项判断：
 
 - 模型状态放在重置追踪之后、当前会话之前，保持截图原有节奏。
 - 输出速率放在当前会话最后一行。
+- 头部下方是客户端切换标签（见 4.1.2）；仅原生菜单栏面板显示，MCP 内保持只有 Codex。
 - 面板不显示“新增”标记；该标记只存在于设计对照稿。
 
 ### 4.3 状态与交互
@@ -355,7 +404,7 @@ UI 必须显示：
 - token 只发送到 `chatgpt.com`；不写日志、不写缓存、不写快照、不进 UI。
 - 不读取、不存储、不上传对话正文、工具输出、附件内容。
 - 会话索引只保留数值、模型/档位、事件时间、计数；`id` 只保留后缀。
-- 网络白名单：`chatgpt.com`、`codexradar.com`、`codex-reset.com`、`status.openai.com`；用户自定义源在设置中显式启用后加入本次白名单，只接受 HTTPS，拒绝 loopback/私网/链路本地地址，且重定向必须仍在白名单内。
+- 网络白名单按来源拆分：官方 `chatgpt.com` 独立 host 集合；radar 三源（`codexradar.com`、`codex-reset.com`、`status.openai.com`）；DeepSeek `platform.deepseek.com`；MiniMax `www.minimaxi.com`。只有 HTTPS，拒绝 loopback/私网/链路本地地址；每个带令牌的 client 只允许自己的 host，重定向也必须在同一 host 集合内。用户自定义源在设置中显式启用后加入本次白名单。
 - 提供“清除本地数据”，删除索引、快照、源缓存、基线。
 
 ## 6. 架构
@@ -626,6 +675,11 @@ M0 是硬门槛：若本地插件无法渲染 MCP App，立即切“插件文本
   - `GET https://chatgpt.com/backend-api/wham/usage/plan_limit_history?days=7`
 - 会话日志：`~/.codex/sessions/**/rollout-*.jsonl`；事件 `turn_context`、`thread_settings_applied`、`token_usage_record`、`task_started`、`task_complete`、`token_count`、`item_completed`、`compacted`；`item_completed.item.type` 实测为 `Reasoning`、`AgentMessage`、`CommandExecution`、`McpToolCall`、`FileChange`、`Extension`、`ContextCompaction` 等。
 - 四源：`https://codexradar.com/current.json`、`https://codexradar.com/feed.xml`、`https://codex-reset.com/api/feed`、`https://codex-reset.com/api/status`、`https://status.openai.com/api/v2/summary.json`。
+- 客户端额度：
+  - Qoder：`~/Library/Application Support/com.qodercn.app.stable/logs/**/main*.log` 的 `[AccountUsage] 用量响应摘要`；字段 `qoderUsage.totalUsagePercentage`、`userQuota/addOnQuota`。凭证为加密 Chromium 存储，不读。
+  - DeepSeek Harness：`~/.dsh/.credentials.yaml` 的 `deepseek-account-platform/default.payload.token` 与 `issuer` → `GET https://platform.deepseek.com/api/v0/users/get_user_summary`，请求头 `x-dsh-auth-token`，字段 `normal_wallets/bonus_wallets`。
+  - MiniMax Code：`~/.minimax/auth/prod/cn/mcode-public/auth.json` 的 `records[*mcode.oauth*].accessToken` → `GET https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains`，`Authorization: Bearer`；字段 `model_remains[model_name=general].current_weekly_remaining_percent`、`current_interval_remaining_percent`、`weekly_boost_permille`、`end_time`、`weekly_end_time`；重置卡另调 `GET /backend/account/reset_card/list?page=1&size=20`。
+  - 客户端启动注意：从终端启动 DeepSeek Harness 时要去掉 `ELECTRON_RUN_AS_NODE=1`，否则 Electron 以 Node 模式启动后立即退出。
 - 参考实现：`github.com/WineChord/codex-radar`（MIT）；仅参考额度读取、app-server 启动、状态栏组织方式，不整段照搬。
 
 设计对照稿位于本地 `.superpowers/brainstorm/`（已 gitignore），不提交真实账号数据。
@@ -634,15 +688,17 @@ M0 是硬门槛：若本地插件无法渲染 MCP App，立即切“插件文本
 
 | 编号 | 决策 | 理由 |
 | --- | --- | --- |
-| D1 | Codex 插件 + macOS 菜单栏双入口 | 插件不能注入底部 chip；菜单栏承担常驻 |
+| D1 | Codex 插件 + macOS 菜单栏双入口 | 插件不能注入底部 chip；菜单栏承担常驻；另以悬浮贴片在四个客户端 composer 内显示各自额度 |
 | D2 | Swift 原生：SwiftPM + SwiftUI/NSStatusItem + WKWebView + Swift MCP | 用户选择原生/轻量；共用 Core 保证口径 |
 | D3 | B 版“截图保真”布局 | 保留截图原有节奏；新增信息靠后 |
 | D4 | 降智只做本地基线 | 可复核、不依赖社区黑盒；避免双重口径 |
 | D5 | 四源追踪，≥2 重置类来源交叉确认 | 降低单源误报；官方状态只作旁证 |
 | D6 | 允许直读 auth.json，仅内存驻留 | 账号统计与重置卡需要官方接口；用户明确允许 |
-| D7 | 不做自动用卡/购买/注入 | 风险高、不可逆；本期只读 |
+| D7 | 不做自动用卡/购买/改包注入 | 风险高、不可逆；悬浮贴片是只读独立窗口 |
 | D8 | M0 先验 MCP App，失败即降级 | 插件宿主能力是最大不确定性 |
 | D9 | 自定义 Swift 测试执行器 | 本机无 XCTest/Swift Testing 宏；零安装可跑，CI 同命令 |
+| D10 | 悬浮贴片用独立窗口，不改客户端 | 用户要求“侵入式”视觉；贴片可跟随 composer、更新不失效、无需调试端口 |
+| D11 | 各客户端显示各自额度 | 用户选择；Qoder 走本地日志，DeepSeek/MiniMax 走各自官方接口 |
 
 ## 12. 附录 A：快照 JSON
 

@@ -25,7 +25,7 @@ final class PanelViewController: NSViewController, WKScriptMessageHandler, WKNav
         // its `ready` message as soon as it runs.
         contentController.add(ScriptMessageRelay(handler: self), name: PanelMessageBridge.handlerName)
         webView.navigationDelegate = self
-        webView.underPageBackgroundColor = .clear
+        webView.underPageBackgroundColor = .windowBackgroundColor
         if let development = ProcessInfo.processInfo.environment["CODEXINFO_DEV_URL"],
            let url = URL(string: development) {
             webView.load(URLRequest(url: url))
@@ -60,10 +60,26 @@ final class PanelViewController: NSViewController, WKScriptMessageHandler, WKNav
         measureContent()
     }
 
+    /// Pushes the data of the clients that are not Codex into the page.
+    func renderClients(_ clients: [ClientUsageSnapshot]) {
+        guard let json = Self.json(clients) else { return }
+        webView.evaluateJavaScript("window.CodexInfoHost && window.CodexInfoHost.renderClients && window.CodexInfoHost.renderClients(\(json));")
+        measureContent()
+    }
+
+    /// Selects the panel tab of a client.
+    func selectClient(_ client: String) {
+        let json = Self.jsonString(client)
+        webView.evaluateJavaScript("window.CodexInfoHost && window.CodexInfoHost.selectClient && window.CodexInfoHost.selectClient(\(json));")
+        measureContent()
+    }
+
     /// Reports the height of the content, so the popover is exactly as tall as
     /// the panel and never leaves empty space below it.
     func measureContent() {
-        webView.evaluateJavaScript("document.documentElement.scrollHeight") { [weak self] value, _ in
+        webView.evaluateJavaScript(
+            "(() => { const panel = document.querySelector('.panel'); return panel ? Math.ceil(panel.getBoundingClientRect().height) : 0; })()"
+        ) { [weak self] value, _ in
             guard let height = value as? Double, height > 0 else { return }
             Task { @MainActor in self?.onContentHeightChange?(CGFloat(height)) }
         }
@@ -106,11 +122,11 @@ final class PanelViewController: NSViewController, WKScriptMessageHandler, WKNav
         decisionHandler(.allow)
     }
 
-    /// The snapshot as JSON with ISO-8601 dates.
-    private static func json(_ snapshot: UsageSnapshot) -> String? {
+    /// A value as JSON with ISO-8601 dates.
+    private static func json<T: Encodable>(_ value: T) -> String? {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        guard let data = try? encoder.encode(snapshot) else { return nil }
+        guard let data = try? encoder.encode(value) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 

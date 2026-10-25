@@ -1,8 +1,65 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mockSnapshot } from "../src/data/mockSnapshot";
+import type { ClientUsageSnapshot } from "../src/data/types";
+
+/** The client panels the native bridge of the test pushes. */
+const mockClients: ClientUsageSnapshot[] = [
+  {
+    client: "qoder",
+    name: "Qoder",
+    quotaPercent: 50,
+    quotaLabel: "额度",
+    detail: "剩余 1274 / 2500 积分",
+    resetsAt: "2026-11-23T02:52:22.646Z",
+    resetLabel: "刷新",
+    limits: [
+      { id: "plan", label: "套餐内 Credits", usedPoints: 826, totalPoints: 2000, usedPercent: 42, resetAt: "2026-11-23T02:52:22.646Z", resetLabel: "刷新" },
+      { id: "addOn", label: "资源包", usedPoints: 400, totalPoints: 500, usedPercent: 80 },
+    ],
+    source: "本地用量日志",
+    updatedAt: "2026-10-25T03:38:00.000Z",
+    tone: "normal",
+    note: "Qoder 刷新账户用量时更新；数据来自本地日志。",
+  },
+  {
+    client: "miniMaxCode",
+    name: "MiniMax",
+    quotaPercent: 93,
+    quotaLabel: "额度",
+    detail: "5 小时窗口 100%",
+    resetsAt: "2026-10-26T00:00:00.000Z",
+    resetLabel: "重置",
+    model: "MiniMax M3.1 Flash",
+    effort: "思考",
+    source: "官方额度接口",
+    updatedAt: "2026-10-25T03:38:00.000Z",
+    tone: "normal",
+    resetCardTotal: 3,
+    limits: [
+      { id: "fiveHour", label: "5 小时限额", usedPoints: 0, totalPoints: 100, resetAt: "2026-10-25T12:00:00.000Z" },
+      { id: "weekly", label: "周限额", usedPoints: 10, totalPoints: 150, resetAt: "2026-10-26T00:00:00.000Z" },
+    ],
+    resetCards: [
+      { id: "card-1", source: "mcode_signin", label: "完全重置", expiresAt: "2026-10-26T08:00:00.000Z", grantedAt: "2026-10-12T03:38:59.548Z" },
+      { id: "card-2", source: "mcode_signin", label: "完全重置", expiresAt: "2026-10-27T08:00:00.000Z", grantedAt: "2026-10-12T18:33:21.814Z" },
+      { id: "card-3", source: "mcode_signin", label: "完全重置", expiresAt: "2026-10-28T08:00:00.000Z", grantedAt: "2026-10-13T18:37:28.663Z" },
+    ],
+  },
+  {
+    client: "deepSeekHarness",
+    name: "DeepSeek",
+    quotaText: "¥41.60",
+    quotaLabel: "余额",
+    model: "DeepSeek V4 Flash",
+    effort: "Max",
+    source: "官方钱包",
+    updatedAt: "2026-10-25T03:38:00.000Z",
+    tone: "normal",
+  },
+];
 
 /** A message the page posted over the native bridge. */
-type BridgeMessage = { type: string; url?: string };
+type BridgeMessage = { type: string; url?: string; height?: number };
 
 /** A JSON-RPC message the MCP host received from the panel. */
 type HostCall = { method?: string; params?: { name?: string; url?: string } };
@@ -30,8 +87,9 @@ test("the native host announces itself and takes the messages of the panel", asy
   await page.goto("/");
 
   // The app waits for the announcement before it pushes the first snapshot.
+  // The height poll may follow it; the first message is still `ready`.
   await page.waitForFunction(() => Boolean(window.CodexInfoHost));
-  expect(await bridgeMessages(page)).toEqual([{ type: "ready" }]);
+  expect((await bridgeMessages(page))[0]).toEqual({ type: "ready" });
 
   await page.evaluate((snapshot) => window.CodexInfoHost?.render(snapshot), mockSnapshot);
   await expect(page.getByTestId("weekly-quota")).toContainText("84%");
@@ -51,6 +109,82 @@ test("the native host announces itself and takes the messages of the panel", asy
 
   await page.evaluate(() => window.CodexInfoHost?.error("快照不可用"));
   await expect(page.getByTestId("panel")).toContainText("快照不可用");
+});
+
+test("the native host switches between the client panels", async ({ page }) => {  await page.addInitScript(() => {
+    (window as unknown as { webkit: unknown }).webkit = {
+      messageHandlers: {
+        codexInfo: { postMessage: () => undefined },
+      },
+    };
+  });
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.CodexInfoHost));
+  await page.evaluate((snapshot) => window.CodexInfoHost?.render(snapshot), mockSnapshot);
+  await page.evaluate((clients) => window.CodexInfoHost?.renderClients?.(clients), mockClients);
+  await expect(page.getByTestId("weekly-quota")).toContainText("84%");
+
+  await page.getByRole("tab", { name: "Qoder" }).click();
+  await expect(page.getByTestId("client-limit-plan-value")).toContainText("826 / 2,000");
+  await expect(page.getByTestId("client-limit-addOn-value")).toContainText("400 / 500");
+  await expect(page.getByTestId("panel")).toContainText("套餐内 Credits");
+  await expect(page.getByTestId("panel")).toContainText("资源包");
+  await expect(page.getByTestId("panel")).toContainText("已使用 42%");
+  await expect(page.getByTestId("panel")).toContainText("剩余 1,174");
+  await expect(page.getByTestId("panel")).toContainText("刷新");
+  await expect(page.getByTestId("panel")).toContainText("本地用量日志");
+
+  await page.getByRole("tab", { name: "MiniMax" }).click();
+  await expect(page.getByTestId("client-limit-fiveHour-value")).toContainText("0 / 100");
+  await expect(page.getByTestId("client-limit-weekly-value")).toContainText("10 / 150");
+  await expect(page.getByTestId("panel")).toContainText("5 小时限额");
+  await expect(page.getByTestId("panel")).toContainText("周限额");
+  await expect(page.getByTestId("client-model")).toContainText("MiniMax M3.1 Flash · 思考");
+  await expect(page.getByTestId("client-reset-card-count")).toContainText("3 张");
+  await expect(page.getByTestId("panel")).toContainText("完全重置");
+
+  await page.getByRole("tab", { name: "DeepSeek" }).click();
+  await expect(page.getByTestId("client-quota")).toContainText("¥41.60");
+  await expect(page.getByTestId("client-model")).toContainText("DeepSeek V4 Flash · Max");
+
+  await page.getByRole("tab", { name: "Codex" }).click();
+  await expect(page.getByTestId("weekly-quota")).toContainText("84%");
+
+  // A click on the overlay badge asks the native app to select the tab.
+  await page.evaluate(() => window.CodexInfoHost?.selectClient?.("qoder"));
+  await expect(page.getByTestId("client-limit-plan-value")).toContainText("826 / 2,000");
+});
+
+test("the native host reports the panel height after a tab switch", async ({ page }) => {
+  await page.addInitScript(() => {
+    const sent: BridgeMessage[] = [];
+    (window as unknown as { __bridge: BridgeMessage[] }).__bridge = sent;
+    (window as unknown as { webkit: unknown }).webkit = {
+      messageHandlers: {
+        codexInfo: { postMessage: (message: BridgeMessage) => sent.push(message) },
+      },
+    };
+  });
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.CodexInfoHost));
+  await page.evaluate((snapshot) => window.CodexInfoHost?.render(snapshot), mockSnapshot);
+  await page.evaluate((clients) => window.CodexInfoHost?.renderClients?.(clients), mockClients);
+  await expect
+    .poll(async () => (await bridgeMessages(page)).filter((message) => message.type === "height").length)
+    .toBeGreaterThan(0);
+  const before = (await bridgeMessages(page))
+    .filter((message) => message.type === "height")
+    .at(-1)?.height;
+  await page.getByRole("tab", { name: "Qoder" }).click();
+  await expect
+    .poll(
+      async () =>
+        (await bridgeMessages(page))
+          .filter((message) => message.type === "height")
+          .at(-1)?.height,
+      { timeout: 3000 }
+    )
+    .not.toBe(before);
 });
 
 test("the MCP host takes the snapshot from the server tools", async ({ page }) => {

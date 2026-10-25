@@ -76,11 +76,12 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
         // The snapshot of the menu bar app is read before the own one, so the
         // plugin and the menu bar show the same numbers (design 6.3).
         let appStore = SnapshotStore(directory: support, fileName: SnapshotStore.fileName)
-        let http = URLSessionHTTPClient()
+        let officialHTTP = URLSessionHTTPClient(hosts: SourceHosts.official)
+        let radarHTTP = URLSessionHTTPClient(hosts: SourceHosts.radar)
         let credentials = FileCredentialStore()
-        let official = OfficialUsageClient(http: http, credentials: credentials)
+        let official = OfficialUsageClient(http: officialHTTP, credentials: credentials)
         let credits = ResetCreditService(
-            official: OfficialResetCreditsClient(http: http, credentials: credentials),
+            official: OfficialResetCreditsClient(http: officialHTTP, credentials: credentials),
             fallback: nil
         )
         let codexHome = ProcessInfo.processInfo.environment[AppConstants.codexHomeEnvironmentKey]
@@ -105,7 +106,7 @@ public final class LiveEnvironment: @unchecked Sendable, SnapshotBuilding, Reset
                 CodexResetsSource(),
                 OpenAIStatusSource(),
             ],
-            http: http
+            http: radarHTTP
         )
         let builder = SnapshotBuilder(
             quota: quota, credits: credits, sessions: repository, account: account, radar: radar

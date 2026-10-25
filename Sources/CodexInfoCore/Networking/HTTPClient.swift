@@ -31,12 +31,7 @@ public protocol HTTPClient: Sendable {
 /// in the settings joins the list for the run.
 public enum NetworkAllowList {
     /// The hosts of the default sources.
-    public static let defaultHosts: Set<String> = [
-        "chatgpt.com",
-        "codexradar.com",
-        "codex-reset.com",
-        "status.openai.com",
-    ]
+    public static let defaultHosts: Set<String> = SourceHosts.official.union(SourceHosts.radar)
 
     /// Whether the URL may be requested.
     ///

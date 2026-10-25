@@ -21,6 +21,8 @@ final class AppEnvironment: ObservableObject {
     let settings: SettingsStore
     /// The notifications of the app.
     let notifications: NotificationController
+    /// The quota data of the clients that are not Codex.
+    let clients: ClientUsageStore
     /// The live services of this machine.
     let live: LiveEnvironment
     /// The cleaner of the local data.
@@ -32,11 +34,19 @@ final class AppEnvironment: ObservableObject {
     var openRequested: (() -> Void)?
 
     private var refreshTask: Task<Void, Never>?
+    /// One snapshot build at a time: the 5-second loop, the panel refresh and
+    /// a scan can all ask; an older build must never land after a newer one.
+    private var refreshInFlight = false
 
-    init(live: LiveEnvironment = .live(), cleaner: LocalDataCleaner = LocalDataCleaner()) {
+    init(
+        live: LiveEnvironment = .live(),
+        cleaner: LocalDataCleaner = LocalDataCleaner(),
+        clients: ClientUsageStore? = nil
+    ) {
         self.live = live
         self.settings = SettingsStore()
         self.notifications = NotificationController()
+        self.clients = clients ?? ClientUsageStore.live()
         self.cleaner = cleaner
     }
 
@@ -48,6 +58,7 @@ final class AppEnvironment: ObservableObject {
         notifications.onOpen = { [weak self] in
             Task { @MainActor in self?.openRequested?() }
         }
+        clients.start()
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { break }
@@ -61,10 +72,14 @@ final class AppEnvironment: ObservableObject {
     func stop() {
         refreshTask?.cancel()
         refreshTask = nil
+        clients.stop()
     }
 
     /// Rebuilds the snapshot and hands it to the panel.
     func refresh() async {
+        guard !refreshInFlight else { return }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
         let current = settings.settings
         let value = await live.builder.build(
             now: Date(),

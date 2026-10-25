@@ -4,6 +4,7 @@ registerCoreTests()
 registerAppTests()
 registerMCPTests()
 registerLiveTests()
+registerClientUsageTests()
 
 let arguments = CommandLine.arguments
 let filter: String?

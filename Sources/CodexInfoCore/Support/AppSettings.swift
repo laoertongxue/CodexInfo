@@ -17,6 +17,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var launchAtLogin: Bool
     /// The parts of the menu bar title, in the order they are shown.
     public var segments: [StatusSegment]
+    /// Whether the quota badge is shown inside the supported clients.
+    public var overlayEnabled: Bool
 
     public init(
         baselineWindowDays: Int = 7,
@@ -24,7 +26,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         thresholdTier: HealthThresholdTier = .standard,
         notificationsEnabled: Bool = false,
         launchAtLogin: Bool = false,
-        segments: [StatusSegment] = [.quota, .rate, .health]
+        segments: [StatusSegment] = [.quota, .rate, .health],
+        overlayEnabled: Bool = true
     ) {
         self.baselineWindowDays = baselineWindowDays
         self.minimumTurns = minimumTurns
@@ -32,6 +35,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.notificationsEnabled = notificationsEnabled
         self.launchAtLogin = launchAtLogin
         self.segments = segments
+        self.overlayEnabled = overlayEnabled
     }
 
     /// The settings of a fresh installation.
@@ -47,6 +51,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         notificationsEnabled = try container.decode(Bool.self, forKey: .notificationsEnabled)
         launchAtLogin = try container.decode(Bool.self, forKey: .launchAtLogin)
         segments = try container.decode([StatusSegment].self, forKey: .segments)
+        // Files of builds before the overlay keep the badge on, which is the
+        // state those builds had no way to turn off.
+        overlayEnabled = try container.decodeIfPresent(Bool.self, forKey: .overlayEnabled) ?? true
     }
 }
 

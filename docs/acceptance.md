@@ -32,7 +32,7 @@ Expected output, in this order:
 ```
 ==> Swift suite
 ...
-SUMMARY ran=148 failed=0
+SUMMARY ran=186 failed=0
 ==> Web build
 ...
 Generated .../Sources/CodexInfoCore/Generated/WebAssets.swift
@@ -41,7 +41,7 @@ Build complete!
 ==> MCP smoke
 MCP smoke OK
 ==> Playwright suite
-  22 passed (3.6s)
+  27 passed (5.2s)
 GATE OK
 ```
 
@@ -68,7 +68,7 @@ Expected:
 
 ---
 
-## 2. The seven manual checks
+## 2. The nine manual checks
 
 The numbers of the checks come from a real account, so they are **manual**.
 
@@ -237,23 +237,37 @@ written to the terminal or to a file:
 
 ```bash
 python3 - <<'PY'
-import json, pathlib
+import json, pathlib, re
 home = pathlib.Path.home()
+tokens = []
 auth = json.loads((home / ".codex/auth.json").read_text())
-tokens = auth.get("tokens") or {}
-candidates = [auth.get("access_token"), auth.get("accessToken"),
-              tokens.get("access_token"), tokens.get("accessToken")]
-token = next((c for c in candidates if isinstance(c, str) and c), "")
-print("token found:", bool(token), "length:", len(token))
+for key in ("access_token", "accessToken"):
+    if isinstance(auth.get(key), str):
+        tokens.append(auth[key])
+for key, value in (auth.get("tokens") or {}).items():
+    if key.lower().endswith("token") and isinstance(value, str):
+        tokens.append(value)
+creds = home / ".dsh/.credentials.yaml"
+if creds.exists():
+    match = re.search(r"deepseek-account-platform/default:\s*\n(?:.*\n)*?\s*token:\s*(\S+)", creds.read_text())
+    if match:
+        tokens.append(match.group(1).strip("'\""))
+mini_auth = home / ".minimax/auth/prod/cn/mcode-public/auth.json"
+if mini_auth.exists():
+    records = json.loads(mini_auth.read_text()).get("records", {})
+    for key, record in records.items():
+        if "mcode.oauth" in key and isinstance(record, dict) and record.get("accessToken"):
+            tokens.append(record["accessToken"])
+print("tokens found:", len(tokens))
 roots = [home / "Library/Application Support/CodexInfo", home / "Library/Logs/CodexInfo"]
 hits = []
 for root in roots:
     if not root.exists():
         continue
     for path in root.rglob("*"):
-        if path.is_file() and token and token in path.read_text(errors="ignore"):
+        if path.is_file() and any(token in path.read_text(errors="ignore") for token in tokens):
             hits.append(str(path))
-print("files that carry the token:", hits or "none")
+print("files that carry a token:", hits or "none")
 PY
 ```
 
@@ -266,12 +280,83 @@ grep -rho 'https://[a-zA-Z0-9./_-]*' Sources/CodexInfoCore Sources/CodexInfoLive
 
 Expected:
 
-- `files that carry the token: none`.
+- `files that carry a token: none` (Codex, DeepSeek and MiniMax tokens are checked).
 - Only the whitelisted hosts appear: `chatgpt.com`, `codexradar.com`,
-  `codex-reset.com` and `status.openai.com`. When the system routes the
-  traffic through a local proxy (for example `127.0.0.1:7890`), the first
-  command shows the proxy instead of the hosts; the second command then has
-  to list nothing but the four hosts above.
+  `codex-reset.com`, `status.openai.com`, `platform.deepseek.com` and
+  `www.minimaxi.com`. When the system routes the traffic through a local
+  proxy (for example `127.0.0.1:7890`), the first command shows the proxy
+  instead of the hosts; the second command then lists only those six hosts.
+- A token-bearing client never follows a redirect to another source: the
+  official, DeepSeek and MiniMax clients each pin their own `SourceHosts`
+  set, and the host-set unit test covers the four sets.
+
+---
+
+### Check 8 — The overlay in the four clients
+
+*Spec: 4.1.1.*
+
+The overlay is on by default. Bring each client to the front and check the
+chip next to its native model selector:
+
+Before the numbers, grant the precise anchor: 「设置 → 客户端贴片 → 授权…」,
+allow CodexInfo in System Settings → Privacy & Security → Accessibility, then
+restart CodexInfo. Without the permission, Codex / DeepSeek use the
+calibrated window fallback; the Qoder and MiniMax badges are hidden (their
+composers have no reliable window-only position) until the permission is granted.
+
+| Client | Expected chip | Where the value comes from |
+| --- | --- | --- |
+| ChatGPT / Codex | `额度 71% · 会话 —` (or a rate while a turn runs) | the existing snapshot |
+| Qoder | `额度 48% · 会话 —` | the last `[AccountUsage]` line of the Qoder log |
+| MiniMax Code | `额度 93% · 会话 —` | `coding_plan/remains`, general model |
+| DeepSeek Harness | `余额 ¥41.60 · 会话 —` | the platform wallet summary |
+
+The numbers are examples. Also check:
+
+1. The chip and the native model selector share the same horizontal center
+   line; the selector's hover background stays fully visible, with a gap of
+   about 14pt between the chip and the background.
+2. Move or resize the client window, or open/close the Qoder file explorer:
+   the chip follows within half a second.
+3. Click the chip: the menu bar panel opens on the matching client tab; the
+   client composer does not receive the click.
+4. Turn 「设置 → 客户端贴片」 off: every chip disappears; turn it on: the
+   chip of the frontmost client returns.
+5. Bring another app to the front: no chip floats over it.
+6. Qoder only refreshes when its own `main.log` receives a new usage line;
+   the chip may keep the last value until then.
+
+---
+
+### Check 9 — The client switcher in the panel
+
+*Spec: 4.1.2.*
+
+Open the menu bar panel. The tabs `Codex / Qoder / MiniMax / DeepSeek` sit
+under the header; the Codex tab is the full panel from Check 1. Switch the
+tabs and check:
+
+| Tab | Expected |
+| --- | --- |
+| Qoder | `套餐内 Credits 826 / 2,000`, `已使用 42%`, `剩余 1,174`, `2026/11/23 10:52 刷新`, `资源包 400 / 500`, `已使用 80%`, `剩余 100`, source `本地用量日志`; no model row |
+| MiniMax | `5 小时限额 0 / 100`, `2026/10/25 15:00 重置`, `周限额 10 / 150`, `2026/10/26 00:00 重置`, `重置卡 3 张`（完全重置，带到期）, `MiniMax M3.1 Flash · 思考`, source `官方额度接口` |
+| DeepSeek | `余额 ¥41.60`, `DeepSeek V4 Flash · Max`, source `官方钱包` |
+
+The numbers are examples. Also check:
+
+1. The footer of each client panel sits at the bottom of the popover; no
+   empty space is left below it.
+2. The MiniMax panel shows the 5-hour and weekly windows as used / total
+   points, each with its own reset time and countdown; the reset-card section
+   lists the three cards as `完全重置` with their expiry and countdown, and the
+   panel never offers a use action.
+3. 「刷新」and the 30-second refresh update both the Codex snapshot and the
+   three client panels; the floating badge of the same client shows the same
+   number.
+4. The tabs are absent inside the Codex plugin (MCP mode shows only Codex).
+5. The tab selection is kept while the panel page is loaded; a reload or an
+   app restart returns to Codex.
 
 ---
 
@@ -343,6 +428,8 @@ seconds once a snapshot exists.
 | 5. The four reset sources | manual | | | |
 | 6. A missing `auth.json` | manual | | | |
 | 7. No token anywhere | manual | | | |
+| 8. The overlay in four clients | manual | | | |
+| 9. The client switcher | manual | | | |
 | A. Install the Codex plugin | **USER GATE** | | | |
 | B. The MCP App in Codex | **USER GATE** | | | |
 | Performance | manual | | | |

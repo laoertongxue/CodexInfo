@@ -13,6 +13,9 @@ public enum AppConstants {
     public static let refreshSessionSeconds: TimeInterval = 5
     public static let refreshAccountSeconds: TimeInterval = 300
     public static let refreshSourcesSeconds: TimeInterval = 60
+    /// The client quota endpoints must answer within this window; a hung
+    /// request must not stall the panel or the badge forever.
+    public static let clientUsageTimeoutSeconds: TimeInterval = 10
     public static let staleSeconds: TimeInterval = 300
     public static let userAgent = "CodexInfo/0.1.0"
 }

@@ -2342,6 +2342,51 @@ func registerCoreTests() {
         context.expectEqual(snapshot?.weeklyRemainingPercent, 84)
         context.expectEqual(snapshot?.source, .session)
     }
+
+    test("Client badge labels the raw session values") { context in
+        context.expectEqual(ClientBadgeFormatter.modelLabel("gpt-6.1-sol"), "GPT-6.1 Sol")
+        context.expectEqual(ClientBadgeFormatter.modelLabel("gpt-5-codex"), "GPT-5 Codex")
+        context.expectEqual(ClientBadgeFormatter.modelLabel("openai/gpt-5"), "GPT-5")
+        context.expectEqual(ClientBadgeFormatter.modelLabel("  "), nil)
+        context.expectEqual(ClientBadgeFormatter.effortLabel("xhigh"), "极高")
+        context.expectEqual(ClientBadgeFormatter.effortLabel("high"), "高")
+        context.expectEqual(ClientBadgeFormatter.effortLabel(nil), nil)
+        context.expectEqual(ClientBadgeFormatter.sessionLabel(isActive: false, rate: 45), "会话 —")
+        context.expectEqual(ClientBadgeFormatter.sessionLabel(isActive: true, rate: 45.4), "45 tok/s")
+        context.expectEqual(ClientBadgeFormatter.sessionLabel(isActive: true, rate: nil), "生成中")
+    }
+
+    test("Client badge tone follows the quota and the verdict") { context in
+        context.expectEqual(ClientBadgeFormatter.tone(quotaPercent: 71), .normal)
+        context.expectEqual(ClientBadgeFormatter.tone(quotaPercent: 29), .warn)
+        context.expectEqual(ClientBadgeFormatter.tone(quotaPercent: 9), .danger)
+        context.expectEqual(ClientBadgeFormatter.tone(quotaPercent: nil, health: .degraded), .danger)
+        context.expectEqual(ClientBadgeFormatter.tone(quotaPercent: nil, health: .suspected), .warn)
+        context.expectEqual(ClientBadgeFormatter.tone(quotaPercent: nil, health: .insufficient), .normal)
+    }
+
+    test("A token source only allows the hosts of its own source") { context in
+        let chatgpt = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
+        let radar = URL(string: "https://codexradar.com/current.json")!
+        let deepSeek = URL(string: "https://platform.deepseek.com/api/v0/users/get_user_summary")!
+        let miniMax = URL(string: "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains")!
+
+        context.expectEqual(NetworkAllowList.allows(chatgpt, hosts: SourceHosts.official), true)
+        context.expectEqual(NetworkAllowList.allows(radar, hosts: SourceHosts.official), false)
+        context.expectEqual(NetworkAllowList.allows(deepSeek, hosts: SourceHosts.official), false)
+        context.expectEqual(NetworkAllowList.allows(miniMax, hosts: SourceHosts.official), false)
+
+        context.expectEqual(NetworkAllowList.allows(radar, hosts: SourceHosts.radar), true)
+        context.expectEqual(NetworkAllowList.allows(chatgpt, hosts: SourceHosts.radar), false)
+        context.expectEqual(NetworkAllowList.allows(deepSeek, hosts: SourceHosts.radar), false)
+
+        context.expectEqual(NetworkAllowList.allows(deepSeek, hosts: SourceHosts.deepSeek), true)
+        context.expectEqual(NetworkAllowList.allows(miniMax, hosts: SourceHosts.deepSeek), false)
+        context.expectEqual(NetworkAllowList.allows(chatgpt, hosts: SourceHosts.deepSeek), false)
+
+        context.expectEqual(NetworkAllowList.allows(miniMax, hosts: SourceHosts.miniMax), true)
+        context.expectEqual(NetworkAllowList.allows(deepSeek, hosts: SourceHosts.miniMax), false)
+    }
 }
 
 /// A source that always returns the same signals.

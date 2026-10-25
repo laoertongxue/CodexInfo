@@ -63,6 +63,10 @@ func registerAppTests() {
         context.expectEqual(PanelMessage.parse(["type": "scan"]), .scan)
         context.expectEqual(PanelMessage.parse(["type": "openSettings"]), .openSettings)
         context.expectEqual(PanelMessage.parse(["type": "close"]), .close)
+        context.expectEqual(PanelMessage.parse(["type": "height", "height": 651]), .height(651))
+        context.expectEqual(PanelMessage.parse(["type": "height", "height": 0]), nil)
+        context.expectEqual(PanelMessage.parse(["type": "height", "height": -10]), nil)
+        context.expectEqual(PanelMessage.parse(["type": "height", "height": "651"]), nil)
         context.expectEqual(
             PanelMessage.parse(["type": "openURL", "url": "https://example.com/reset"]),
             .openURL("https://example.com/reset")
@@ -89,7 +93,8 @@ func registerAppTests() {
             minimumTurns: 12,
             notificationsEnabled: true,
             launchAtLogin: true,
-            segments: [.quota, .health, .updated]
+            segments: [.quota, .health, .updated],
+            overlayEnabled: false
         )
         do {
             try store.save(settings)
@@ -106,6 +111,26 @@ func registerAppTests() {
         let store = SettingsFileStore(url: directory.appendingPathComponent("settings.json"))
         context.expectEqual(store.load(), AppSettings.default)
         context.expectEqual(AppSettings.default.segments, [.quota, .rate, .health])
+        context.expectEqual(AppSettings.default.overlayEnabled, true)
+    }
+
+    test("A settings file of an older build keeps the overlay on") { context in
+        // The file was written before the overlay existed, so it has no key.
+        let json = """
+        {
+          "baselineWindowDays": 7,
+          "minimumTurns": 8,
+          "notificationsEnabled": false,
+          "launchAtLogin": false,
+          "segments": ["quota", "rate", "health"]
+        }
+        """
+        do {
+            let settings = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+            context.expectEqual(settings.overlayEnabled, true)
+        } catch {
+            context.fail("the older file was not decoded: \(error)")
+        }
     }
 
     test("Notification events cover the four triggers of the spec") { context in

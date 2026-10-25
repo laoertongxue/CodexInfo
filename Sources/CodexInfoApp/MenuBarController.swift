@@ -36,6 +36,14 @@ final class MenuBarController: NSObject {
             .dropFirst()
             .sink { [weak self] settings in self?.refreshTitle(segments: settings.segments) }
             .store(in: &cancellables)
+        // The panel tabs of the clients that are not Codex.
+        environment.clients.$snapshots
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.panel.renderClients(self.environment.clients.ordered)
+            }
+            .store(in: &cancellables)
     }
 
     /// Puts the item into the menu bar.
@@ -66,8 +74,11 @@ final class MenuBarController: NSObject {
 
     /// Keeps the popover as tall as the panel, so no empty space is left
     /// below the content.
+    ///
+    /// A client panel is much shorter than the Codex panel, so the minimum
+    /// only has to fit the header, the tabs and the footer of an empty state.
     private func resizePopover(to height: CGFloat) {
-        let clamped = min(max(height, 320), 780)
+        let clamped = min(max(height, 200), 780)
         guard abs(popover.contentSize.height - clamped) > 1 else { return }
         popover.contentSize = NSSize(width: 340, height: clamped)
     }
@@ -81,6 +92,19 @@ final class MenuBarController: NSObject {
         }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Opens the panel on the client of the clicked badge.
+    ///
+    /// The status item and the badge share the panel page; the selection is
+    /// sent to the page so the tab matches the badge that was clicked.
+    func showPanel(client: ClientOverlayTarget) {
+        guard let button = statusItem.button else { return }
+        if !popover.isShown {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        panel.selectClient(client.rawValue)
     }
 
     /// Opens the panel or the menu, depending on the button that was clicked.
@@ -173,8 +197,13 @@ final class MenuBarController: NSObject {
             if let snapshot = environment.snapshot {
                 panel.render(snapshot)
             }
+            panel.renderClients(environment.clients.ordered)
         case .refresh:
-            Task { await environment.refresh() }
+            Task {
+                async let codex: Void = environment.refresh()
+                async let clients: Void = environment.clients.refreshAll()
+                _ = await (codex, clients)
+            }
         case .scan:
             Task { await environment.scan() }
         case .openURL(let value):
@@ -186,6 +215,8 @@ final class MenuBarController: NSObject {
             showSettings()
         case .close:
             popover.performClose(nil)
+        case .height(let height):
+            resizePopover(to: CGFloat(height))
         }
     }
 

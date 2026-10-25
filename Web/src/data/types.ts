@@ -10,6 +10,48 @@ export type DataState = "fresh" | "stale" | "loading" | "error";
 export type HealthStatus = "normal" | "suspected" | "degraded" | "insufficient";
 export type SourceState = "ok" | "degraded" | "down";
 
+/** One quota window of a client. */
+export interface ClientQuotaLimit {
+  id: string;
+  label: string;
+  usedPoints: number;
+  totalPoints: number;
+  usedPercent?: number | null;
+  resetAt?: string | null;
+  resetLabel?: string | null;
+}
+
+/** One usage-reset card of a client. */
+export interface ClientResetCard {
+  id: string;
+  source?: string | null;
+  label?: string | null;
+  expiresAt?: string | null;
+  grantedAt?: string | null;
+}
+
+/** The compact panel of a client that is not Codex. */
+export interface ClientUsageSnapshot {
+  /** `qoder`, `miniMaxCode` or `deepSeekHarness`. */
+  client: string;
+  name: string;
+  quotaPercent?: number | null;
+  quotaText?: string | null;
+  quotaLabel: string;
+  detail?: string | null;
+  resetsAt?: string | null;
+  resetLabel?: string | null;
+  model?: string | null;
+  effort?: string | null;
+  source: string;
+  updatedAt: string;
+  tone: "normal" | "warn" | "danger" | "muted";
+  note?: string | null;
+  resetCards?: ClientResetCard[] | null;
+  resetCardTotal?: number | null;
+  limits?: ClientQuotaLimit[] | null;
+}
+
 /** The areas that carry their own freshness state. */
 export interface Freshness {
   quota: DataState;

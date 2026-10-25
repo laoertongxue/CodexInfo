@@ -125,3 +125,28 @@ Shared-file pairs checked: `Package.swift` (2→18→19→20), `CodexInfoTests/m
 - M0 gate (2026-10-25): the plugin was installed into ~/.codex/config.toml (backup config.toml.bak.20261025-083746) and Codex was restarted. Codex's own log shows `mcp_server_startup_status_updated server=codexinfo status=ready`, i.e. the local marketplace, the plugin and the MCP server all load. The panel rendering itself still needs the user's eyes: the Codex web content is not exposed to Accessibility, so the controller cannot drive or read the chat UI.
 - M0 gate PASSED (2026-10-25): the user confirmed the MCP App renders the panel inside a Codex thread (用量 / 周额度 / 重置卡 / 重置追踪 / 模型状态 / 最近会话 with 输出速率 / 账号统计 / 底栏 all present).
 - Defect found during the M0 check: the panel's quota area was empty. Root cause: the official /wham/usage returns `rate_limit.primary_window` (used_percent, limit_window_seconds, reset_at), while the client only decoded the session-log shape `rate_limits.primary` (window_minutes, resets_at); and an official response without a weekly window never fell back to the session numbers. Fixed in commit f14b67a (both payload shapes + fallback), three new tests, Swift suite 172 PASS. Verified live: snapshot.json now shows weeklyRemainingPercent 71, reset 2026-10-30, authExpired false; the app and the plugin were rebuilt and both restarted (Codex log: server=codexinfo status=ready).
+
+## 2026-10-25 — 客户端悬浮贴片 + 面板滚动修复
+
+- 口径变更：用户明确要求「侵入」，此前「不注入客户端」的决定作废。实现采用**点击穿透的独立 NSPanel 贴片**，不修改客户端包、不注入 DOM；见设计 4.1.1。
+- 贴片：`Sources/CodexInfoApp/Overlay/`（目标/锚点、控制器、绘制）；按前台客户端的最大可见窗口定位，0.35s 跟随；24pt 高，无边框、不抢焦点、点击穿透；仅在目标客户端前台时显示。
+- 设置：`AppSettings.overlayEnabled` 默认开；旧 settings.json 缺键时解码为 true；设置页「客户端贴片」开关。
+- 数据：Codex 走现有快照；Qoder 读 `.../com.qodercn.app.stable/logs/**/main*.log` 最后一条 `[AccountUsage]`；DeepSeek 用 `~/.dsh/.credentials.yaml` 的 grant 调 `platform.deepseek.com`（`x-dsh-auth-token`）；MiniMax 用 `~/.minimax/.../auth.json` 的 OAuth 调 `www.minimaxi.com/v1/api/openplatform/coding_plan/remains`（Bearer）。令牌只发各自官方域，Qoder 不读凭证。
+- 滚动修复：原生模式页面不透明、去掉外层圆角/阴影/嵌套裁剪，`overscroll-behavior: contain`；页面用 `ResizeObserver` 发 `height` 消息，弹层随内容伸缩；`measureContent` 改读 `.panel` 高度。实机验证弹层 780→651 回缩，滚动 3s 采样主线程空闲。
+- 验证：Swift 182 PASS（新增 7 项客户端额度测试 + badge 格式化/色调），Playwright 25 PASS；bundle 重建并签名；四个客户端实机截图：Codex 71%、Qoder 48%、MiniMax 93%、DeepSeek 余额 ¥41.60。
+- 环境坑：从 Qoder 终端启动 DeepSeek Harness 会被继承的 `ELECTRON_RUN_AS_NODE=1` 变成 Node 模式并立即退出；用 `env -u ELECTRON_RUN_AS_NODE` 启动即可，Finder 启动不受影响。
+- 样式修正（同日，用户对照参考图 3）：贴片从“描边胶囊”改为无边框浅灰填充块，24pt 高、11.5pt 字、10pt 横向内边距；Codex/Qoder/MiniMax/DeepSeek 四个客户端实机复验。
+- 对齐修正（用户红线反馈）：贴片文字中心改为与原生模型选择器同一水平线。新增辅助功能精确模式：对客户端设置 `AXEnhancedUserInterface` 后读取 web AX 树，取最低 `AXTextArea` 作为 composer、其下方 ±120pt 内最右侧 90–420pt 宽的 `AXButton/AXPopUpButton` 作为模型选择器；贴片右侧距选择器 10pt。实机四客户端位置：Codex (847,999)、Qoder (560,975，分栏布局)、MiniMax (905,995)、DeepSeek (882,837)。未授权时退回窗口右下角估算；设置页新增「授权…」入口。
+- 面板客户端切换（2026-10-25）：原生面板头部下方新增 Codex / Qoder / MiniMax / DeepSeek 四标签；非 Codex 用 `ClientUsageSnapshot` 紧凑面板（额度/余额、进度条、剩余积分/5 小时窗口、重置/到期、模型/档位、来源、更新时间）；`ClientUsageStore` 统一供面板与贴片，30s 刷新；Qoder 无模型时隐藏模型块；popover 最小高度 320→200，客户端面板不再留白；MCP 内不显示标签。验证：Swift 182 PASS、Playwright 26 PASS（新增 native host 四标签切换测试）。
+- 遮挡修正（用户截图）：原生模型选择器的悬停底色比 AX 文本 frame 向左侧多约 10pt，原 10pt 间距会让贴片压住底色的左圆角。间距改为 24pt（视觉约 14pt），并同步四个客户端的无权限回退位置；实机悬停复测贴片不再遮挡选择器底色。
+- 贴片点击交互（2026-10-25）：从 `ignoresMouseEvents=true` 改为可点击；单击打开菜单栏面板并选中对应客户端（`PanelViewController.selectClient` + `NativeHost.selectClient` + `MenuBarController.showPanel(client:)`）；加悬停手型与加深底色。实机点 Codex 贴片已打开面板；Playwright 增加 `selectClient("qoder")` 断言。
+- 审查修复（2026-10-25，正向 5 项 + 对抗同源项）：
+  - 令牌隔离：新增 `SourceHosts`（official / radar / deepSeek / miniMax），官方与 radar 在 `LiveEnvironment` 拆分 client，DeepSeek/MiniMax 在 `ClientUsageStore` 拆分；各 client 只允许自己的 host，跨源重定向被拒；新增 host 集合测试。
+  - 超时与刷新：DeepSeek/MiniMax 请求 10s；`ClientUsageStore` 增加 30s 原生 timer 与 pending 合并；`AppEnvironment.refresh` 加 in-flight 守卫；面板刷新并行跑 Codex 与客户端。
+  - Qoder：日志时间戳解析 `[ISO8601]`；尾部按 4/16/64MB 递进；切片从行边界开始、有损 UTF-8 解码；按 mtime/size 缓存；分栏布局无 AX 时隐藏贴片；无权限窗口回退校验不越界。
+  - 其它对抗项：DeepSeek issuer 必填；MiniMax 必须有 general 周额度；NativeHost 250ms 轮询当前 `.panel` 修 React 替换后的高度桥；点击贴片补 AX button 角色/前台校验，移除 pending。
+  - 验证：Swift 186 PASS、Playwright 27 PASS；实机 Codex 71% + 4/4 来源、Qoder 48%（更新于 09:30 真实日志时间）、MiniMax 93、DeepSeek ¥41.60；Qoder 面板高度 681→288 即时收缩。
+- MiniMax 遮挡修正（同日，根因）：AX 树已 8817 节点，定位器 8000 上限走不到 composer，退回窗口估算 946 压住模型选择器右端。定位改为倒序遍历子节点 + 30k 上限，并先用控件标签（GPT-/模型:/选择模型/M3/MiniMax）认模型选择器；MiniMax 也改为无精确锚点就隐藏。真实选择器在 732，完整贴片落在 566..708，保留「会话 —」，不再遮挡。
+- MiniMax 重置卡（同日）：客户端代码 `Q=/backend/account/reset_card`；`GET https://www.minimaxi.com/backend/account/reset_card/list?page=1&size=20`（同一 OAuth Bearer）返回可用卡 `cards[]`（card_id/source_type/expire_time/create_time）与 `total`；已用卡只在 flows 里，list 不含。MiniMax provider 并行/顺序拉取并加入 `ClientUsageSnapshot.resetCards/resetCardTotal`；面板新增只读「重置卡」区块（3 张签到卡、到期与倒计时、不使用）。实测本机 3 张（10/27、10/28、10/29 到期）。Swift 186、Playwright 27 全绿。
+- MiniMax 双窗口额度（同日）：面板按 MiniMax 用量页展示 `5 小时限额 0 / 100` 与 `周限额 10 / 150`，各自带进度条、重置时间与倒计时；总点数由 `weekly_boost_permille/10` 换算（缺省 100，实测 1500 → 150），已用点数按剩余百分比折算。`ClientQuotaLimit` 加入 `ClientUsageSnapshot.limits`，前端 `ClientPanel` 在有 limits 时替换通用额度块；重置卡标签从来源说明改为卡种 `完全重置`，底部仍注明来自签到奖励且只读。验证：Swift 186 PASS、Playwright 27 PASS、tsc 无错；实机 MiniMax 面板 `0 / 100`、`10 / 150`、`2026/10/25 15:00`、`2026/10/26 00:00`、3 张完全重置卡。
+- Qoder 套餐/资源包（同日，用户对照 Qoder 用量页）：面板把 `userQuota` 显示为「套餐内 Credits」（826 / 2,000、已使用 42%、剩余 1,174、2026/11/23 10:52 刷新），把 `addOnQuota` 显示为「资源包」（400 / 500、已使用 80%、剩余 100，日志无到期字段所以不显示重置行）。已使用 % 用接口 `percentage` 而非 826/2000 反算，才能保持 Qoder 的 42%；总点数带千分位。`ClientQuotaLimit` 增加 `usedPercent/resetLabel`，Qoder 与 MiniMax 共用 `limits` 渲染。验证：Swift 186、Playwright 27、tsc 全绿；实机截图 `qoder_panel_limits.png`。

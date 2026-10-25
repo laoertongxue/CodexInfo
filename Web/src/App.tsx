@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
 import { DASH, formatDateTime, formatRate, formatRemaining, formatTokens } from "./format";
 import { useHost } from "./host/useHost";
-import type { DataState, HealthStatus, ResetSignal, SourceState, UsageSnapshot } from "./data/types";
+import type { ClientUsageSnapshot, DataState, HealthStatus, ResetSignal, SourceState, UsageSnapshot } from "./data/types";
 import type { Host } from "./host/types";
 
 /** The four local verdicts of the model health. */
@@ -109,30 +109,315 @@ function SignalBadge({ tone }: { tone: SignalTone }) {
   return <span className={`tag tone-${tone}`}>{TONE_LABEL[tone]}</span>;
 }
 
+/** The clients of the switcher, in the order of the tabs. */
+const CLIENT_TABS = [
+  { client: "codex", name: "Codex" },
+  { client: "qoder", name: "Qoder" },
+  { client: "miniMaxCode", name: "MiniMax" },
+  { client: "deepSeekHarness", name: "DeepSeek" },
+] as const;
+
+/** The header of both the Codex panel and a client panel. */
+function Header({
+  title,
+  plan,
+  mode,
+  host,
+}: {
+  title: string;
+  plan?: string | null;
+  mode: Host["mode"];
+  host: RefObject<Host | null>;
+}) {
+  return (
+    <header className="header">
+      <strong className="title">{title}</strong>
+      {plan != null && (
+        <span className="badge" data-testid="plan-badge">
+          {plan}
+        </span>
+      )}
+      <button className="ghost" onClick={() => host.current?.refresh()}>
+        刷新
+      </button>
+      <button className="ghost" onClick={() => host.current?.openSettings()} aria-label="设置">
+        设置
+      </button>
+      {mode !== "mcp" && (
+        <button className="close" onClick={() => host.current?.close()} aria-label="关闭">
+          ×
+        </button>
+      )}
+    </header>
+  );
+}
+
+/** The client switcher; only the native app owns the other clients' data. */
+function ClientTabs({
+  mode,
+  selected,
+  onSelect,
+}: {
+  mode: Host["mode"];
+  selected: string;
+  onSelect: (client: string) => void;
+}) {
+  if (mode !== "native") return null;
+  return (
+    <div className="clients" role="tablist" aria-label="客户端">
+      {CLIENT_TABS.map((tab) => (
+        <button
+          key={tab.client}
+          role="tab"
+          aria-selected={selected === tab.client}
+          className={selected === tab.client ? "active" : ""}
+          onClick={() => onSelect(tab.client)}
+        >
+          {tab.name}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** The compact panel of a client that is not Codex. */
+function ClientPanel({
+  client,
+  clientId,
+  now,
+  host,
+  mode,
+  selected,
+  onSelect,
+}: {
+  client: ClientUsageSnapshot | null;
+  clientId: string;
+  now: number;
+  host: RefObject<Host | null>;
+  mode: Host["mode"];
+  selected: string;
+  onSelect: (client: string) => void;
+}) {
+  const tab = CLIENT_TABS.find((item) => item.client === clientId);
+  const name = client?.name ?? tab?.name ?? "客户端";
+  const quotaValue = client?.quotaPercent != null ? `${client.quotaPercent}%` : client?.quotaText ?? DASH;
+  const quotaDisplay = client?.quotaPercent != null ? `剩余 ${client.quotaPercent}%` : client?.quotaText ?? DASH;
+  const toneClass =
+    client?.tone === "warn" ? "quota-low" : client?.tone === "danger" ? "quota-critical" : "";
+  const limits = client?.limits ?? [];
+  return (
+    <main data-testid="panel" className="panel">
+      <Header title={name} mode={mode} host={host} />
+      <ClientTabs mode={mode} selected={selected} onSelect={onSelect} />
+      <div className="body">
+        {client ? (
+          <>
+            {limits.length > 0 ? (
+              limits.map((limit) => {
+                const usedRatio =
+                  limit.usedPercent != null
+                    ? limit.usedPercent / 100
+                    : limit.totalPoints > 0
+                      ? limit.usedPoints / limit.totalPoints
+                      : 0;
+                const usedPercent = limit.usedPercent ?? Math.round(usedRatio * 100);
+                const remaining = Math.max(0, limit.totalPoints - limit.usedPoints);
+                const limitTone =
+                  usedRatio >= 0.9 ? "quota-critical" : usedRatio >= 0.7 ? "quota-low" : "";
+                return (
+                  <Section id={`client-limit-${limit.id}`} key={limit.id}>
+                    <div className="row">
+                      <strong>{limit.label}</strong>
+                      <strong data-testid={`client-limit-${limit.id}-value`} className={limitTone}>
+                        {limit.usedPoints.toLocaleString("zh-CN")} /{" "}
+                        {limit.totalPoints.toLocaleString("zh-CN")}
+                      </strong>
+                    </div>
+                    <div className="bar">
+                      <i style={{ width: `${Math.min(100, usedPercent)}%` }} />
+                    </div>
+                    <div className="row tiny muted">
+                      <span>已使用 {usedPercent}%</span>
+                      <span>剩余 {remaining.toLocaleString("zh-CN")}</span>
+                    </div>
+                    {limit.resetAt && (
+                      <div className="row tiny muted">
+                        <span />
+                        <span>
+                          {formatDateTime(limit.resetAt)} {limit.resetLabel ?? "重置"} ·{" "}
+                          {formatRemaining(limit.resetAt, now)}
+                        </span>
+                      </div>
+                    )}
+                  </Section>
+                );
+              })
+            ) : (
+              <Section id="client-quota-section">
+                <div className="row">
+                  <strong>{client.quotaLabel}</strong>
+                  <strong data-testid="client-quota" className={toneClass}>
+                    {quotaDisplay}
+                  </strong>
+                </div>
+                {client.quotaPercent != null && (
+                  <div className="bar">
+                    <i style={{ width: `${client.quotaPercent}%` }} />
+                  </div>
+                )}
+                {client.detail && (
+                  <div className="row tiny muted">
+                    <span />
+                    <span>{client.detail}</span>
+                  </div>
+                )}
+                {client.resetsAt && (
+                  <div className="row tiny muted">
+                    <span />
+                    <span>
+                      {formatDateTime(client.resetsAt)} {client.resetLabel ?? "重置"} ·{" "}
+                      {formatRemaining(client.resetsAt, now)}
+                    </span>
+                  </div>
+                )}
+              </Section>
+            )}
+
+            {client.client === "miniMaxCode" && (
+              <Section id="client-reset-cards">
+                <div className="row">
+                  <strong>重置卡</strong>
+                  <strong data-testid="client-reset-card-count">
+                    {client.resetCards
+                      ? `${client.resetCardTotal ?? client.resetCards.length} 张`
+                      : DASH}
+                  </strong>
+                </div>
+                {client.resetCards == null ? (
+                  <div className="tiny muted">重置卡数据暂不可用</div>
+                ) : client.resetCards.length === 0 ? (
+                  <div className="tiny muted">暂无可用重置卡</div>
+                ) : (
+                  client.resetCards.map((card, index) => (
+                    <div className="row tiny" key={card.id} data-testid="client-reset-card">
+                      <span className="muted">
+                        第 {index + 1} 张 · {card.label ?? "重置卡"}
+                      </span>
+                      <span className="right">
+                        {card.expiresAt ? `${formatDateTime(card.expiresAt)} 到期` : DASH}
+                        {card.expiresAt ? (
+                          <>
+                            <br />
+                            余 {formatRemaining(card.expiresAt, now)}
+                          </>
+                        ) : null}
+                      </span>
+                    </div>
+                  ))
+                )}
+                <div className="tiny muted">来自 MiniMax 签到奖励；本面板只展示，不使用。</div>
+              </Section>
+            )}
+
+            {(client.model || client.effort) && (
+              <Section id="client-model-section">
+                <div className="row">
+                  <strong>当前模型</strong>
+                  <span data-testid="client-model">
+                    {client.model ?? DASH}
+                    {client.effort ? ` · ${client.effort}` : ""}
+                  </span>
+                </div>
+              </Section>
+            )}
+
+            <Section id="client-source">
+              <div className="row tiny muted">
+                <span>数据来源</span>
+                <span>{client.source}</span>
+              </div>
+              <div className="row tiny muted">
+                <span>更新于</span>
+                <span>{formatDateTime(client.updatedAt)}</span>
+              </div>
+              {client.note && <div className="tiny muted">{client.note}</div>}
+            </Section>
+          </>
+        ) : (
+          <Section id="client-loading">
+            <div className="tiny muted">正在读取 {name} 的额度…</div>
+            <div className="tiny muted">首次读取需要一两秒；数据来自客户端自己的账号与本地日志。</div>
+          </Section>
+        )}
+      </div>
+      <footer className="footer">
+        {client
+          ? `${name} · ${client.quotaLabel} ${quotaValue} · 更新 ${formatDateTime(client.updatedAt)}`
+          : `${name} · 数据读取中`}
+      </footer>
+    </main>
+  );
+}
+
 export default function App() {
-  const { snapshot, error, mode, host } = useHost();
+  const { snapshot, clients, selection, error, mode, host } = useHost();
   const [now, setNow] = useState(Date.now());
+  const [selected, setSelected] = useState<string>("codex");
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (selection && CLIENT_TABS.some((tab) => tab.client === selection.client)) {
+      setSelected(selection.client);
+    }
+  }, [selection]);
+
   if (error) return <main data-testid="panel" className="panel error">加载失败：{error}</main>;
   if (!snapshot) return <main data-testid="panel" className="panel loading">加载中…</main>;
-  return <Panel snapshot={snapshot} now={now} host={host} mode={mode} />;
+  const known = CLIENT_TABS.some((tab) => tab.client === selected);
+  const active = mode === "native" && known ? selected : "codex";
+  if (active !== "codex") {
+    return (
+      <ClientPanel
+        client={clients.find((item) => item.client === active) ?? null}
+        clientId={active}
+        now={now}
+        host={host}
+        mode={mode}
+        selected={active}
+        onSelect={setSelected}
+      />
+    );
+  }
+  return (
+    <CodexPanel
+      snapshot={snapshot}
+      now={now}
+      host={host}
+      mode={mode}
+      selected={active}
+      onSelect={setSelected}
+    />
+  );
 }
 
-function Panel({
+function CodexPanel({
   snapshot,
   now,
   host,
   mode,
+  selected,
+  onSelect,
 }: {
   snapshot: UsageSnapshot;
   now: number;
   host: RefObject<Host | null>;
   mode: Host["mode"];
+  selected: string;
+  onSelect: (client: string) => void;
 }) {
   const quota = snapshot.quota;
   const credits = snapshot.resetCredits;
@@ -209,23 +494,13 @@ function Panel({
 
   return (
     <main data-testid="panel" className="panel">
-      <header className="header">
-        <strong className="title">用量</strong>
-        <span className="badge" data-testid="plan-badge">
-          {quotaUsable ? (quota.planType ?? DASH) : DASH}
-        </span>
-        <button className="ghost" onClick={() => host.current?.refresh()}>
-          刷新
-        </button>
-        <button className="ghost" onClick={() => host.current?.openSettings()} aria-label="设置">
-          设置
-        </button>
-        {mode !== "mcp" && (
-          <button className="close" onClick={() => host.current?.close()} aria-label="关闭">
-            ×
-          </button>
-        )}
-      </header>
+      <Header
+        title="用量"
+        plan={quotaUsable ? (quota.planType ?? DASH) : DASH}
+        mode={mode}
+        host={host}
+      />
+      <ClientTabs mode={mode} selected={selected} onSelect={onSelect} />
 
       <div className="body">
         <Section id="quota">

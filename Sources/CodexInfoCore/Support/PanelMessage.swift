@@ -18,6 +18,8 @@ public enum PanelMessage: Equatable, Hashable, Sendable {
     case openSettings
     /// The panel asks to be closed.
     case close
+    /// The height of the panel, in points.
+    case height(Double)
 
     /// Parses the body of a script message.
     ///
@@ -45,6 +47,19 @@ public enum PanelMessage: Equatable, Hashable, Sendable {
             return .openSettings
         case "close":
             return .close
+        case "height":
+            // The popover is at most as tall as the screen; a value outside
+            // that range is a broken message, not a layout.
+            let value: Double
+            if let number = dictionary["height"] as? Double {
+                value = number
+            } else if let number = dictionary["height"] as? Int {
+                value = Double(number)
+            } else {
+                return nil
+            }
+            guard value > 0, value <= 2_000 else { return nil }
+            return .height(value)
         default:
             return nil
         }

@@ -10,15 +10,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var environment: AppEnvironment?
     private var menuBar: MenuBarController?
+    private var overlay: ClientOverlayController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let environment = AppEnvironment()
         let menuBar = MenuBarController(environment: environment)
+        let overlay = ClientOverlayController(environment: environment)
         self.environment = environment
         self.menuBar = menuBar
+        self.overlay = overlay
         // A notification or the URL scheme opens the panel.
         environment.openRequested = { [weak menuBar] in menuBar?.showPanel() }
+        overlay.onSelect = { [weak menuBar] target in
+            menuBar?.showPanel(client: target)
+        }
         menuBar.install()
+        overlay.start()
         environment.start()
     }
 
