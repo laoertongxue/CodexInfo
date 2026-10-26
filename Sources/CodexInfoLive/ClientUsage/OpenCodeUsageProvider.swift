@@ -97,6 +97,7 @@ public struct OpenCodeUsageProvider: Sendable {
 
         let zen = await fetchZen(stored: credentials.zenToken, now: moment)
         let models = await freeModels()
+        let outputRate = OpenCodeOutputRateReader.read(databaseURL: databaseURL)
         let remaining = goWindows?.map { max(0, 100 - $0.usedPercent) }.min()
         let tone: ClientBadgeTone
         if let remaining {
@@ -121,7 +122,8 @@ public struct OpenCodeUsageProvider: Sendable {
                 zenBalance: zen.balance,
                 zenState: zen.state,
                 freeModels: models.isEmpty ? nil : models
-            )
+            ),
+            outputRate: outputRate
         )
     }
 

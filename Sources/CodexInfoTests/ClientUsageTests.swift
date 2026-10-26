@@ -88,6 +88,15 @@ func registerClientUsageTests() {
         context.expectEqual(snapshot?.tone, .muted)
     }
 
+    test("Qoder usage reports that the local log has no output duration") { context in
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let snapshot = await QoderUsageProvider(logRoot: root).snapshot()
+        context.expectEqual(snapshot?.outputRate?.samples, 0)
+        context.expectEqual(snapshot?.outputRate?.latest, nil)
+        context.expectTrue(snapshot?.outputRate?.basis.contains("未记录") == true)
+    }
+
     test("DeepSeek usage sends the local grant and shows the balance") { context in
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -124,7 +133,8 @@ func registerClientUsageTests() {
         let provider = DeepSeekUsageProvider(
             credentialsURL: credentials,
             settingsURL: settings,
-            http: client
+            http: client,
+            sessionCacheURL: directory.appendingPathComponent("missing-sessions")
         )
         let snapshot = await provider.snapshot()
         context.expectEqual(snapshot?.quotaText, "¥41.60")
@@ -139,6 +149,68 @@ func registerClientUsageTests() {
             client.lastRequest?.value(forHTTPHeaderField: "x-dsh-auth-token"),
             "tok_test_deepseek"
         )
+    }
+
+    test("DeepSeek usage reads the output rate of the recent sessions") { context in
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let credentials = directory.appendingPathComponent(".credentials.yaml")
+        let settings = directory.appendingPathComponent("settings.yaml.imported")
+        let sessions = directory.appendingPathComponent("sessions", isDirectory: true)
+        let yaml = """
+        version: 1
+        records:
+          deepseek-account-platform/default:
+            kind: grant
+            payload:
+              version: 1
+              token: tok_test_deepseek
+              issuer: https://platform.deepseek.com
+        """
+        let settingsYAML = """
+        agent-default-model:
+          provider: deepseek-official
+          model: deepseek-v4-flash
+          reasoningEffort: max
+        """
+        do {
+            try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+            try yaml.write(to: credentials, atomically: true, encoding: .utf8)
+            try settingsYAML.write(to: settings, atomically: true, encoding: .utf8)
+            let fixtures: [(decodeMs: Int, tokens: Int, at: Int)] = [
+                (1000, 100, 1_000_000),
+                (1000, 200, 2_000_000),
+                (1000, 300, 3_000_000),
+            ]
+            for (index, fixture) in fixtures.enumerated() {
+                let json = """
+                {"record":{"rows":{"sessionStats":{"val":{"decodeMs":\(fixture.decodeMs),"decodeTokens":\(fixture.tokens)}},"timeContext":{"val":{"lastMessageTime":\(fixture.at)}}}}}
+                """
+                try json.write(
+                    to: sessions.appendingPathComponent("session-\(index).json"),
+                    atomically: true,
+                    encoding: .utf8
+                )
+            }
+        } catch {
+            context.fail("the DeepSeek fixtures were not written: \(error)")
+            return
+        }
+        let json = #"{"code":0,"data":{"biz_data":{"normal_wallets":[{"currency":"CNY","balance":"41.6049165"}],"bonus_wallets":[]}}}"#
+        let client = MockHTTPClient(response: HTTPResponse(data: Data(json.utf8), statusCode: 200))
+        let provider = DeepSeekUsageProvider(
+            credentialsURL: credentials,
+            settingsURL: settings,
+            http: client,
+            sessionCacheURL: sessions
+        )
+        let snapshot = await provider.snapshot()
+        context.expectEqual(snapshot?.outputRate?.latest, 300)
+        context.expectEqual(snapshot?.outputRate?.median, 200)
+        context.expectEqual(snapshot?.outputRate?.samples, 3)
+        context.expectEqual(snapshot?.outputRate?.window, "最近 3 个会话")
+        context.expectEqual(snapshot?.outputRate?.basis, "按解码耗时")
+        context.expectEqual(snapshot?.outputRate?.updatedAt, Date(timeIntervalSince1970: 3_000))
     }
 
     test("DeepSeek usage refuses a grant of another issuer") { context in
@@ -161,7 +233,11 @@ func registerClientUsageTests() {
             return
         }
         let client = MockHTTPClient(error: HTTPError.blockedURL)
-        let snapshot = await DeepSeekUsageProvider(credentialsURL: credentials, http: client).snapshot()
+        let snapshot = await DeepSeekUsageProvider(
+            credentialsURL: credentials,
+            http: client,
+            sessionCacheURL: directory.appendingPathComponent("missing-sessions")
+        ).snapshot()
         context.expectEqual(snapshot?.quotaText, nil)
         context.expectEqual(snapshot?.tone, .muted)
         context.expectEqual(client.requestCount, 0)
@@ -186,7 +262,11 @@ func registerClientUsageTests() {
             return
         }
         let client = MockHTTPClient(error: HTTPError.blockedURL)
-        let snapshot = await DeepSeekUsageProvider(credentialsURL: credentials, http: client).snapshot()
+        let snapshot = await DeepSeekUsageProvider(
+            credentialsURL: credentials,
+            http: client,
+            sessionCacheURL: directory.appendingPathComponent("missing-sessions")
+        ).snapshot()
         context.expectEqual(snapshot?.quotaText, nil)
         context.expectEqual(snapshot?.tone, .muted)
         context.expectEqual(client.requestCount, 0)
@@ -223,6 +303,7 @@ func registerClientUsageTests() {
         let provider = MiniMaxUsageProvider(
             authURL: auth,
             configURL: config,
+            databaseURL: directory.appendingPathComponent("missing.db"),
             http: client,
             now: { Date(timeIntervalSince1970: 1_790_000_000) }
         )
@@ -265,6 +346,57 @@ func registerClientUsageTests() {
         )
     }
 
+    test("MiniMax usage reads the output rate from the decode durations") { context in
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let auth = directory.appendingPathComponent("auth.json")
+        let config = directory.appendingPathComponent("config.yaml")
+        let database = directory.appendingPathComponent("runtime-state.sqlite")
+        do {
+            let records: [String: Any] = [
+                "records": [
+                    "com.minimax.mcode.oauth.prod.cn\u{0}abc": [
+                        "accessToken": "tok_test_minimax",
+                        "expiresAtMs": 9_999_999_999_000
+                    ]
+                ]
+            ]
+            let data = try JSONSerialization.data(withJSONObject: records)
+            try data.write(to: auth)
+            try "defaultModel: minimax/MiniMax-M3.1-Flash\ndefaultModelVariant: thinking\n"
+                .write(to: config, atomically: true, encoding: .utf8)
+            let sql = """
+            CREATE TABLE local_runtime_message_rows (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, msg_id TEXT NOT NULL, role TEXT, turn_id TEXT, created_at_ms INTEGER NOT NULL, data_json TEXT NOT NULL);
+            INSERT INTO local_runtime_message_rows VALUES (1,'s','m1','assistant','t',1000000,'{"usage":{"output_tokens":100,"decode_duration_ms":1000}}');
+            INSERT INTO local_runtime_message_rows VALUES (2,'s','m2','assistant','t',2000000,'{"usage":{"output_tokens":200,"decode_duration_ms":1000}}');
+            INSERT INTO local_runtime_message_rows VALUES (3,'s','m3','assistant','t',3000000,'{"usage":{"output_tokens":300,"decode_duration_ms":1000}}');
+            """
+            try runSQLite(database, sql)
+        } catch {
+            context.fail("the MiniMax fixtures were not written: \(error)")
+            return
+        }
+        let remains = #"{"model_remains":[{"model_name":"general","current_weekly_remaining_percent":93,"current_interval_remaining_percent":100}]}"#
+        let client = PathHTTPClient(responses: [
+            ("coding_plan/remains", HTTPResponse(data: Data(remains.utf8), statusCode: 200)),
+            ("reset_card/list", HTTPResponse(data: Data(#"{"cards":[],"total":0}"#.utf8), statusCode: 200)),
+        ])
+        let provider = MiniMaxUsageProvider(
+            authURL: auth,
+            configURL: config,
+            databaseURL: database,
+            http: client,
+            now: { Date(timeIntervalSince1970: 1_790_000_000) }
+        )
+        let snapshot = await provider.snapshot()
+        context.expectEqual(snapshot?.outputRate?.latest, 300)
+        context.expectEqual(snapshot?.outputRate?.median, 200)
+        context.expectEqual(snapshot?.outputRate?.samples, 3)
+        context.expectEqual(snapshot?.outputRate?.window, "最近 3 次调用")
+        context.expectEqual(snapshot?.outputRate?.basis, "按解码耗时")
+        context.expectEqual(snapshot?.outputRate?.updatedAt, Date(timeIntervalSince1970: 3_000))
+    }
+
     test("MiniMax usage refuses a payload without the general weekly quota") { context in
         let directory = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -292,6 +424,7 @@ func registerClientUsageTests() {
         let provider = MiniMaxUsageProvider(
             authURL: auth,
             configURL: config,
+            databaseURL: directory.appendingPathComponent("missing.db"),
             http: client,
             now: { Date(timeIntervalSince1970: 1_790_000_000) }
         )
@@ -322,6 +455,7 @@ func registerClientUsageTests() {
         let client = MockHTTPClient(error: HTTPError.blockedURL)
         let provider = MiniMaxUsageProvider(
             authURL: auth,
+            databaseURL: directory.appendingPathComponent("missing.db"),
             http: client,
             now: { Date(timeIntervalSince1970: 1_790_000_000) }
         )
@@ -541,6 +675,88 @@ func registerClientUsageTests() {
         )
     }
 
+    test("OpenCode usage reads the output rate from the message parts") { context in
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let db = directory.appendingPathComponent("opencode.db")
+        let goValue = #"{"key":"tok_db_opencode","type":"key"}"#
+        let sql = """
+        CREATE TABLE credential (id text PRIMARY KEY, integration_id text, label text NOT NULL, value text NOT NULL, connector_id text, method_id text, active integer, time_created integer NOT NULL, time_updated integer NOT NULL);
+        INSERT INTO credential VALUES ('c1','opencode-go','OpenCode Go','\(goValue)',NULL,NULL,1,0,0);
+        CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
+        CREATE TABLE part (id text PRIMARY KEY, message_id text NOT NULL, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
+        INSERT INTO message VALUES ('m1','s',1000000,1000000,'{"role":"assistant","tokens":{"output":90,"reasoning":10}}');
+        INSERT INTO message VALUES ('m2','s',2000000,2000000,'{"role":"assistant","tokens":{"output":180,"reasoning":20}}');
+        INSERT INTO message VALUES ('m3','s',3000000,3000000,'{"role":"assistant","tokens":{"output":300,"reasoning":0}}');
+        INSERT INTO message VALUES ('m4','s',4000000,4000000,'{"role":"assistant","tokens":{"output":1000,"reasoning":0}}');
+        INSERT INTO part VALUES ('p1','m1','s',1000,3000,'{"type":"text","time":{"start":1000,"end":3000}}');
+        INSERT INTO part VALUES ('p2','m2','s',2000,4000,'{"type":"reasoning","time":{"start":2000,"end":4000}}');
+        INSERT INTO part VALUES ('p3','m3','s',3000,6000,'{"type":"text","time":{"start":3000,"end":6000}}');
+        INSERT INTO part VALUES ('p4','m3','s',6000,7000,'{"type":"tool","time":{"start":6000,"end":7000}}');
+        INSERT INTO part VALUES ('p5','m4','s',4000,9000,'{"type":"tool","time":{"start":4000,"end":9000}}');
+        """
+        do {
+            try runSQLite(db, sql)
+        } catch {
+            context.fail("the OpenCode database was not created: \(error)")
+            return
+        }
+        let goJSON = #"{"usage":{"rolling":{"percent":3},"weekly":{"percent":2},"monthly":{"percent":1}}}"#
+        let go = PathHTTPClient(responses: [
+            ("zen/go/v1/usage", HTTPResponse(data: Data(goJSON.utf8), statusCode: 200)),
+        ])
+        let provider = OpenCodeUsageProvider(
+            authURL: directory.appendingPathComponent("missing-auth.json"),
+            zenTokenURL: directory.appendingPathComponent("missing-zen.json"),
+            databaseURL: db,
+            goHTTP: go,
+            zenHTTP: MockHTTPClient(error: HTTPError.blockedURL),
+            now: { Date(timeIntervalSince1970: 1_790_000_000) },
+            freeModels: { [] }
+        )
+        let snapshot = await provider.snapshot()
+        context.expectEqual(snapshot?.outputRate?.latest, 100)
+        context.expectEqual(snapshot?.outputRate?.median, 100)
+        context.expectEqual(snapshot?.outputRate?.samples, 3)
+        context.expectEqual(snapshot?.outputRate?.window, "最近 3 条消息")
+        context.expectEqual(snapshot?.outputRate?.basis, "按生成片段耗时")
+    }
+
+    test("OpenCode usage reads the output rate from the v2 session messages") { context in
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let db = directory.appendingPathComponent("opencode.db")
+        let sql = """
+        CREATE TABLE session_message (id text PRIMARY KEY, session_id text NOT NULL, type text NOT NULL, seq integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
+        INSERT INTO session_message VALUES ('m1','s','assistant',1,1000000,1003000,'{"tokens":{"output":90,"reasoning":10},"time":{"created":1000000,"completed":1003000},"content":[{"type":"reasoning","time":{"created":1000000,"completed":1002000}},{"type":"tool","time":{"created":1002000,"completed":1003000}}]}');
+        INSERT INTO session_message VALUES ('m2','s','assistant',2,2000000,2005000,'{"tokens":{"output":200,"reasoning":0},"time":{"created":2000000,"completed":2005000},"content":[{"type":"reasoning","time":{"created":2000000,"completed":2002000}},{"type":"tool","time":{"created":2002000,"completed":2005000}}]}');
+        INSERT INTO session_message VALUES ('m3','s','assistant',3,3000000,3008000,'{"tokens":{"output":300,"reasoning":0},"time":{"created":3000000,"completed":3008000},"content":[{"type":"text","time":{"created":3000000,"completed":3003000}},{"type":"tool","time":{"created":3003000,"completed":3008000}}]}');
+        INSERT INTO session_message VALUES ('m4','s','assistant',4,4000000,4001000,'{"tokens":{"output":1000,"reasoning":0},"time":{"created":4000000,"completed":4001000},"content":[{"type":"tool","time":{"created":4000000,"completed":4001000}}]}');
+        """
+        do {
+            try runSQLite(db, sql)
+        } catch {
+            context.fail("the OpenCode v2 database was not created: \(error)")
+            return
+        }
+        let provider = OpenCodeUsageProvider(
+            authURL: directory.appendingPathComponent("missing-auth.json"),
+            zenTokenURL: directory.appendingPathComponent("missing-zen.json"),
+            databaseURL: db,
+            goHTTP: MockHTTPClient(error: HTTPError.blockedURL),
+            zenHTTP: MockHTTPClient(error: HTTPError.blockedURL),
+            now: { Date(timeIntervalSince1970: 1_790_000_000) },
+            freeModels: { [] }
+        )
+        let snapshot = await provider.snapshot()
+        context.expectEqual(snapshot?.outputRate?.latest, 100)
+        context.expectEqual(snapshot?.outputRate?.median, 100)
+        context.expectEqual(snapshot?.outputRate?.samples, 3)
+        context.expectEqual(snapshot?.outputRate?.window, "最近 3 条消息")
+        context.expectEqual(snapshot?.outputRate?.basis, "按生成片段耗时")
+        context.expectEqual(snapshot?.outputRate?.updatedAt, Date(timeIntervalSince1970: 3_008))
+    }
+
 }
 
 /// A client that answers by URL path and records every request.
@@ -568,4 +784,22 @@ private func temporaryDirectory() -> URL {
         .appendingPathComponent("codexinfo-clientusage-\(UUID().uuidString)", isDirectory: true)
     try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+/// Runs a SQLite script against a test database.
+private func runSQLite(_ database: URL, _ sql: String) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+    process.arguments = [database.path, sql]
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        throw SQLiteTestError(exitCode: process.terminationStatus)
+    }
+}
+
+private struct SQLiteTestError: Error {
+    let exitCode: Int32
 }

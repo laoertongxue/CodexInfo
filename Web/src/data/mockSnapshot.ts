@@ -9,7 +9,7 @@ import type { UsageSnapshot } from "./types";
 export const mockSnapshot: UsageSnapshot = {
   "generatedAt": "2026-10-24T14:20:39+08:00",
   "freshness": { "quota": "fresh", "session": "fresh", "account": "fresh", "sources": "fresh", "resetCredits": "fresh" },
-  "quota": { "planType": "pro", "weeklyRemainingPercent": 84, "weeklyResetsAt": "2026-10-26T11:03:00+08:00", "weeklyWindowMinutes": 10080, "weeklyWindowStartedAt": "2026-10-19T11:03:00+08:00", "source": "official", "fetchedAt": "2026-10-24T14:20:39+08:00" },
+  "quota": { "planType": "pro", "weeklyRemainingPercent": 84, "weeklyResetsAt": "2026-11-01T14:20:00+08:00", "weeklyWindowMinutes": 10080, "weeklyWindowStartedAt": "2026-10-25T14:20:00+08:00", "source": "official", "fetchedAt": "2026-10-24T14:20:39+08:00" },
   "resetCredits": { "availableCount": 1, "reportedAvailableCount": 1, "items": [{ "idSuffix": "123456", "status": "available", "grantedAt": null, "expiresAt": "2026-11-07T07:55:00+08:00", "title": "Full reset" }], "fetchedAt": "2026-10-24T14:20:39+08:00" },
   "session": { "isActive": true, "label": "当前会话", "model": "gpt-6.1-sol", "effort": "xhigh", "serviceTier": "default", "contextTokens": 147000, "contextWindow": 475000, "totalTokens": 1240000, "inputTokens": 1180000, "outputTokens": 58300, "cachedInputTokens": 1020000, "reasoningOutputTokens": 7000, "outputTokensPerSecond": 42.3, "medianOutputTokensPerSecond": 45.1, "ttftMs": 3900, "turnCount": 12, "routeMismatch": false },
   "account": { "todayTokens": 1800000, "totalTokens": 3300000000, "source": "official+local", "updatedAt": "2026-10-24T14:20:39+08:00" },
@@ -29,7 +29,7 @@ export const mockQuotaErrorSnapshot: UsageSnapshot = {
   quota: {
     planType: null,
     weeklyRemainingPercent: 84,
-    weeklyResetsAt: "2026-10-26T11:03:00+08:00",
+    weeklyResetsAt: "2026-11-01T14:20:00+08:00",
     source: "official",
     fetchedAt: "2026-10-24T14:20:39+08:00",
   },
@@ -162,6 +162,64 @@ export const mockStrongUnverifiedSnapshot: UsageSnapshot = {
   },
 };
 
+/** A live forecast that states the expected Beijing reset time. */
+export const mockActiveForecastSnapshot: UsageSnapshot = (() => {
+  const now = Date.now();
+  return {
+    ...mockSnapshot,
+    resetRadar: {
+      ...mockSnapshot.resetRadar,
+      latestConfirmed: null,
+      latestReset: null,
+      latestForecast: {
+        id: "forecast:active",
+        sourceId: "ai-sentinel-signals",
+        sourceName: "AI 哨兵信号",
+        kind: "verifying",
+        severity: null,
+        title: "Day 21：新一轮重置预告",
+        summary: "预计到达：北京时间…",
+        publishedAt: new Date(now - 3_600_000).toISOString(),
+        expectedAt: new Date(now + 6 * 3_600_000).toISOString(),
+        url: "https://x.com/example",
+        verified: false,
+        scope: "Codex 用户",
+        confirmingSources: ["AI 哨兵信号"],
+      },
+      recent: [],
+    },
+  };
+})();
+
+/** A forecast whose expected time is already past. */
+export const mockExpiredForecastSnapshot: UsageSnapshot = (() => {
+  const now = Date.now();
+  return {
+    ...mockSnapshot,
+    resetRadar: {
+      ...mockSnapshot.resetRadar,
+      latestConfirmed: null,
+      latestReset: null,
+      latestForecast: {
+        id: "forecast:expired",
+        sourceId: "codex-resets",
+        sourceName: "Codex Resets",
+        kind: "verifying",
+        severity: null,
+        title: "By midnight PST",
+        summary: "By midnight PST",
+        publishedAt: new Date(now - 26 * 3_600_000).toISOString(),
+        expectedAt: new Date(now - 2 * 3_600_000).toISOString(),
+        url: "https://x.com/example",
+        verified: false,
+        scope: "Codex 用户",
+        confirmingSources: ["Codex Resets"],
+      },
+      recent: [],
+    },
+  };
+})();
+
 /**
  * A group whose second confirming source is the official status.
  *
@@ -232,4 +290,6 @@ export const mockSnapshots: Record<string, UsageSnapshot> = {
   "login-expired": mockLoginExpiredSnapshot,
   "strong-unverified": mockStrongUnverifiedSnapshot,
   "status-confirming": mockStatusConfirmingSnapshot,
+  "active-forecast": mockActiveForecastSnapshot,
+  "expired-forecast": mockExpiredForecastSnapshot,
 };

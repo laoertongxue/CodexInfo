@@ -45,6 +45,9 @@ public struct CodexResetsSource: ResetSource {
             let isSignal = (tweet["kind"] as? String) == "signal"
             guard explicitClaim || isSignal,
                   let text = tweet["text"] as? String else { continue }
+            // The source retires a forecast it no longer stands behind.
+            let verification = (tweet["reset_verification_status"] as? String)?.lowercased()
+            guard verification != "expired" else { continue }
             let verified = explicitClaim && Self.isConfirmed(tweet["reset_verification_status"] as? String)
             // A claim that the payload does not confirm is still a claim, not
             // a completed reset.

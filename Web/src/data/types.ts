@@ -39,6 +39,16 @@ export interface OpenCodeUsage {
   freeModels?: string[] | null;
 }
 
+/** The recent output rate of a client. */
+export interface ClientOutputRate {
+  latest?: number | null;
+  median?: number | null;
+  samples: number;
+  window?: string | null;
+  basis: string;
+  updatedAt?: string | null;
+}
+
 /** One usage-reset card of a client. */
 export interface ClientResetCard {
   id: string;
@@ -50,7 +60,7 @@ export interface ClientResetCard {
 
 /** The compact panel of a client that is not Codex. */
 export interface ClientUsageSnapshot {
-  /** `qoder`, `miniMaxCode` or `deepSeekHarness`. */
+  /** `qoder`, `miniMaxCode`, `openCode` or `deepSeekHarness`. */
   client: string;
   name: string;
   quotaPercent?: number | null;
@@ -69,6 +79,7 @@ export interface ClientUsageSnapshot {
   resetCardTotal?: number | null;
   limits?: ClientQuotaLimit[] | null;
   openCode?: OpenCodeUsage | null;
+  outputRate?: ClientOutputRate | null;
 }
 
 /** The areas that carry their own freshness state. */
@@ -99,6 +110,8 @@ export interface ResetSignal {
   title: string;
   summary: string;
   publishedAt?: string | null;
+  /** The moment the source expects the reset, when it states one. */
+  expectedAt?: string | null;
   url?: string | null;
   verified: boolean;
   scope?: string | null;

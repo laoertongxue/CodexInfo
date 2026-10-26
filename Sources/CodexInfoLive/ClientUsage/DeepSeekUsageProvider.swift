@@ -9,6 +9,7 @@ import CodexInfoCore
 public struct DeepSeekUsageProvider: Sendable {
     private let credentialsURL: URL
     private let settingsURL: URL
+    private let sessionCacheURL: URL
     private let http: any HTTPClient
     private let baseURL: URL
 
@@ -19,16 +20,19 @@ public struct DeepSeekUsageProvider: Sendable {
     ///   - settingsURL: the model settings of the harness.
     ///   - http: the client of the request.
     ///   - baseURL: the platform origin the grant was issued for.
+    ///   - sessionCacheURL: the session cache directory of the harness.
     public init(
         credentialsURL: URL = DeepSeekUsageProvider.defaultCredentialsURL,
         settingsURL: URL = DeepSeekUsageProvider.defaultSettingsURL,
         http: any HTTPClient,
-        baseURL: URL = URL(string: "https://platform.deepseek.com")!
+        baseURL: URL = URL(string: "https://platform.deepseek.com")!,
+        sessionCacheURL: URL = DeepSeekUsageProvider.defaultSessionCacheURL
     ) {
         self.credentialsURL = credentialsURL
         self.settingsURL = settingsURL
         self.http = http
         self.baseURL = baseURL
+        self.sessionCacheURL = sessionCacheURL
     }
 
     /// The grant store of the harness.
@@ -45,11 +49,21 @@ public struct DeepSeekUsageProvider: Sendable {
             .appendingPathComponent("settings.yaml.imported")
     }
 
+    /// The session cache of the harness; its records carry decode totals only.
+    public static var defaultSessionCacheURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".dsh", isDirectory: true)
+            .appendingPathComponent("storages", isDirectory: true)
+            .appendingPathComponent("session_projcache", isDirectory: true)
+            .appendingPathComponent("sessions", isDirectory: true)
+    }
+
     /// The panel data of the wallet.
     public func snapshot() async -> ClientUsageSnapshot? {
         let settings = DeepSeekSettings.read(from: settingsURL)
+        let outputRate = DeepSeekOutputRateReader.read(sessionCacheURL: sessionCacheURL)
         guard let token = DeepSeekCredentials.read(from: credentialsURL) else {
-            return unavailable(settings: settings)
+            return unavailable(settings: settings, outputRate: outputRate)
         }
         var request = URLRequest(url: baseURL.appendingPathComponent("api/v0/users/get_user_summary"))
         request.httpMethod = "GET"
@@ -61,7 +75,7 @@ public struct DeepSeekUsageProvider: Sendable {
             let response = try await http.send(request)
             guard response.statusCode == 200,
                   let balance = DeepSeekBalance.parse(response.data) else {
-                return unavailable(settings: settings)
+                return unavailable(settings: settings, outputRate: outputRate)
             }
             return ClientUsageSnapshot(
                 client: "deepSeekHarness",
@@ -73,14 +87,18 @@ public struct DeepSeekUsageProvider: Sendable {
                 source: "官方钱包",
                 updatedAt: Date(),
                 tone: balance.tone,
-                note: "余额为钱包可用金额（含赠送）。"
+                note: "余额为钱包可用金额（含赠送）。",
+                outputRate: outputRate
             )
         } catch {
-            return unavailable(settings: settings)
+            return unavailable(settings: settings, outputRate: outputRate)
         }
     }
 
-    private func unavailable(settings: DeepSeekSettings) -> ClientUsageSnapshot {
+    private func unavailable(
+        settings: DeepSeekSettings,
+        outputRate: ClientOutputRate
+    ) -> ClientUsageSnapshot {
         ClientUsageSnapshot(
             client: "deepSeekHarness",
             name: "DeepSeek",
@@ -90,7 +108,8 @@ public struct DeepSeekUsageProvider: Sendable {
             source: "官方钱包",
             updatedAt: Date(),
             tone: .muted,
-            note: "余额接口暂不可用；检查 DeepSeek Harness 的登录状态。"
+            note: "余额接口暂不可用；检查 DeepSeek Harness 的登录状态。",
+            outputRate: outputRate
         )
     }
 }

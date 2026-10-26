@@ -79,31 +79,38 @@ test("the radar counts the sources that are not down", async ({ page }) => {
   await expect(page.getByTestId("source-availability")).toHaveText("3/4 来源可用");
 });
 
-test("the reset panel states this account's previous and next reset in Beijing time", async ({ page }) => {
+test("the reset panel states the verdict and this account's next reset in Beijing time", async ({ page }) => {
   await page.goto("/");
+  await expect(page.getByTestId("reset-empty")).toContainText("暂无重置信息/信号");
   const window = page.getByTestId("quota-reset-window");
-  await expect(window).toContainText("你的周额度窗口");
-  await expect(window).toContainText("上次重置");
+  await expect(window).toContainText("本机周额度");
   await expect(window).toContainText("下次重置");
   await expect(window).toContainText("北京时间");
   await expect(page.getByTestId("next-reset-at")).toContainText("北京时间");
   await expect(page.getByTestId("quota")).toContainText("北京时间");
 });
 
-test("a reset from a single source is surfaced instead of hidden", async ({ page }) => {
+test("an old completed reset is not shown as a current signal", async ({ page }) => {
   await page.goto("/?fixture=single-source-reset");
-  const radar = page.getByTestId("reset-radar");
-  await expect(radar).toContainText("Day 20 重置完成");
-  await expect(radar).toContainText("单一来源");
-  await expect(radar).not.toContainText("来源已确认");
+  await expect(page.getByTestId("reset-empty")).toContainText("暂无重置信息/信号");
+  await expect(page.getByTestId("reset-radar")).not.toContainText("Day 20 重置完成");
 });
 
-test("a forecast is shown with its source and publish time", async ({ page }) => {
-  await page.goto("/");
-  const forecast = page.getByTestId("reset-forecast");
-  await expect(forecast).toContainText("By midnight PST");
-  await expect(forecast).toContainText("Codex Resets");
-  await expect(forecast).toContainText("发布");
+test("an active forecast states the Beijing time and its source", async ({ page }) => {
+  await page.goto("/?fixture=active-forecast");
+  const signal = page.getByTestId("reset-signal");
+  await expect(signal).toContainText("有重置信号");
+  await expect(signal).toContainText("预计北京时间");
+  await expect(signal).toContainText("Day 21：新一轮重置预告");
+  await expect(page.getByTestId("reset-signal-source")).toContainText("信源：AI 哨兵信号");
+  await expect(page.getByTestId("reset-signal-source")).toContainText("北京时间");
+  await expect(signal.getByRole("button", { name: /查看原帖/ })).toBeVisible();
+});
+
+test("an expired forecast is not shown as a current signal", async ({ page }) => {
+  await page.goto("/?fixture=expired-forecast");
+  await expect(page.getByTestId("reset-empty")).toContainText("暂无重置信息/信号");
+  await expect(page.getByTestId("reset-radar")).not.toContainText("有重置信号");
 });
 
 test("a weekly reset five minutes ago is marked as just reset", async ({ page }) => {
@@ -142,46 +149,41 @@ test("an errored session hides its numbers in the session and in the model summa
   await expect(page.getByTestId("model-health")).not.toContainText("42.3 tok/s");
 });
 
-test("a confirmed reset names its confirming sources", async ({ page }) => {
-  await page.goto("/");
-  const radar = page.getByTestId("reset-radar");
-  await expect(radar).toContainText("强信号");
-  await expect(radar).toContainText("来源已确认");
-  await expect(radar).toContainText("AI 哨兵记录、AI 哨兵信号、Codex Resets");
-});
-
-test("a single source is never shown as a confirmation", async ({ page }) => {
-  await page.goto("/?fixture=single-source");
-  const radar = page.getByTestId("reset-radar");
-  await expect(radar).toContainText("单一来源");
-  await expect(radar).not.toContainText("来源已确认");
-});
-
-test("a service incident is never shown as a reset confirmation", async ({ page }) => {
+test("a service incident is not shown as a reset signal", async ({ page }) => {
   await page.goto("/?fixture=incident");
   const radar = page.getByTestId("reset-radar");
-  await expect(radar).toContainText("服务故障");
+  await expect(page.getByTestId("reset-empty")).toBeVisible();
+  await expect(radar).not.toContainText("有重置信号");
   await expect(radar).not.toContainText("来源已确认");
-  await expect(radar).not.toContainText("适用范围");
 });
 
-test("an unreachable source is never shown as a reset confirmation", async ({ page }) => {
+test("an unreachable source is not shown as a reset signal", async ({ page }) => {
   await page.goto("/?fixture=degraded-source");
   const radar = page.getByTestId("reset-radar");
-  await expect(radar).toContainText("源不可用");
+  await expect(page.getByTestId("reset-empty")).toBeVisible();
+  await expect(radar).not.toContainText("有重置信号");
   await expect(radar).not.toContainText("来源已确认");
 });
 
-test("a strong severity without a confirmation is not a strong signal", async ({ page }) => {
+test("an old single-source reset is not shown as a current signal", async ({ page }) => {
+  await page.goto("/?fixture=single-source");
+  const radar = page.getByTestId("reset-radar");
+  await expect(page.getByTestId("reset-empty")).toBeVisible();
+  await expect(radar).not.toContainText("有重置信号");
+  await expect(radar).not.toContainText("来源已确认");
+});
+
+test("a strong severity without confirmation is not a reset signal", async ({ page }) => {
   await page.goto("/?fixture=strong-unverified");
-  await expect(page.getByTestId("reset-notice")).toBeVisible();
+  await expect(page.getByTestId("reset-empty")).toBeVisible();
   await expect(page.getByText("强信号")).toHaveCount(0);
 });
 
 test("the official status source never confirms a reset", async ({ page }) => {
   await page.goto("/?fixture=status-confirming");
-  await expect(page.getByTestId("confirmation-state")).toContainText("单一来源");
-  await expect(page.getByTestId("confirmation-state")).not.toContainText("来源已确认");
+  const radar = page.getByTestId("reset-radar");
+  await expect(page.getByTestId("reset-empty")).toBeVisible();
+  await expect(radar).not.toContainText("来源已确认");
 });
 
 test("the reset cards show a dash when the area has no data", async ({ page }) => {

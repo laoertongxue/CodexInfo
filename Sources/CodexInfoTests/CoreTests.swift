@@ -1481,6 +1481,20 @@ func registerCoreTests() {
         context.expectEqual(signals.first?.scope, "Codex 用户")
     }
 
+    test("CodexRadarFeedSource reads the Beijing arrival time of a forecast") { context in
+        let xml = """
+        <rss><channel><item><title>Day 18：新一轮重置预告</title><guid>e</guid><pubDate>Fri, 23 Oct 2026 04:46:19 GMT</pubDate><description><![CDATA[Tibo 已宣布新一轮用量重置，速蹬窗口开启。\n预计到达：北京时间10月24日02:00前（按原文PST换算）。\n适用范围：Codex 用户]]></description></item></channel></rss>
+        """
+        let http = MockHTTPClient(response: HTTPResponse(data: xml.data(using: .utf8)!, statusCode: 200))
+        let source = CodexRadarFeedSource()
+        let signals = try await source.fetch(using: http, now: Date(timeIntervalSince1970: 1_790_000_000))
+        context.expectEqual(signals.first?.kind, .verifying)
+        context.expectEqual(
+            signals.first?.expectedAt,
+            DateParsing.iso8601("2026-10-24T02:00:00+08:00")
+        )
+    }
+
     test("CodexResetsSource parses signal and status") { context in
         let feed = #"{"fetched_at":"2026-10-24T12:00:00Z","signal":{"summary":"Lands tomorrow","at":"2026-10-22T06:55:54Z","url":"https://x.com/example","kind":"signal"},"tweets":[]}"#
         let status = #"{"indicator":"none","description":"All Systems Operational","codex":"operational"}"#
@@ -1520,7 +1534,7 @@ func registerCoreTests() {
     }
 
     test("CodexResetsSource keeps an explicit claim and a forecast verifying without a strong severity") { context in
-        let feed = #"{"fetched_at":"2026-10-24T12:00:00Z","stale":false,"signal":{"summary":"Lands tomorrow","at":"2026-10-22T06:55:54Z","url":"https://x.com/example","kind":"signal","active":true},"tweets":[{"id":"t1","url":"https://x.com/t1","text":"That is a reset!","at":"2026-10-23T04:46:19Z","explicit_reset_claim":true,"reset_verification_status":"expired"},{"id":"t2","url":"https://x.com/t2","text":"Shipping notes","at":"2026-10-23T05:00:00Z","explicit_reset_claim":false},{"id":"t3","url":"https://x.com/t3","text":"By midnight PST","at":"2026-10-25T03:40:04Z","kind":"signal","explicit_reset_claim":false,"reset_verification_candidate":true}]}"#
+        let feed = #"{"fetched_at":"2026-10-24T12:00:00Z","stale":false,"signal":{"summary":"Lands tomorrow","at":"2026-10-22T06:55:54Z","url":"https://x.com/example","kind":"signal","active":true},"tweets":[{"id":"t1","url":"https://x.com/t1","text":"That is a reset!","at":"2026-10-23T04:46:19Z","explicit_reset_claim":true,"reset_verification_status":"pending"},{"id":"t2","url":"https://x.com/t2","text":"Shipping notes","at":"2026-10-23T05:00:00Z","explicit_reset_claim":false},{"id":"t3","url":"https://x.com/t3","text":"By midnight PST","at":"2026-10-25T03:40:04Z","kind":"signal","explicit_reset_claim":false,"reset_verification_candidate":true},{"id":"t4","url":"https://x.com/t4","text":"By midnight PST","at":"2026-10-25T04:00:00Z","kind":"signal","explicit_reset_claim":false,"reset_verification_status":"expired"}]}"#
         let status = #"{"indicator":"none","description":"All Systems Operational","codex":"operational"}"#
         let http = MockHTTPClient(responses: [
             HTTPResponse(data: feed.data(using: .utf8)!, statusCode: 200),
@@ -1532,6 +1546,7 @@ func registerCoreTests() {
         context.expectEqual(claim?.kind, .verifying)
         context.expectEqual(claim?.verified, false)
         context.expectEqual(signals.filter { $0.id.contains("tweet:t2") }.count, 0)
+        context.expectEqual(signals.filter { $0.id.contains("tweet:t4") }.count, 0)
         let forecast = signals.first { $0.id.contains("tweet:t3") }
         context.expectEqual(forecast?.kind, .verifying)
         context.expectEqual(forecast?.title, "By midnight PST")
@@ -1618,6 +1633,24 @@ func registerCoreTests() {
         context.expectEqual(snapshot.latestReset?.id, "reset")
         context.expectEqual(snapshot.latestForecast?.id, "forecast")
         context.expectEqual(snapshot.latestConfirmed, nil)
+    }
+
+    test("ResetRadarService keeps the expected time of a forecast") { context in
+        let calendar = radarCalendar("Asia/Shanghai")
+        let now = radarDate(2026, 10, 26, 12, in: calendar)
+        let expected = now.addingTimeInterval(2 * 3600)
+        let forecast = radarSignal(
+            id: "forecast", sourceId: "ai-sentinel-signals", sourceName: "AI 哨兵信号",
+            title: "Day 21：新一轮重置预告", publishedAt: now,
+            kind: .verifying, verified: false, expectedAt: expected
+        )
+        let service = ResetRadarService(
+            sources: [FakeResetSource(id: "ai-sentinel-signals", name: "AI 哨兵信号", signals: [forecast])],
+            http: MockHTTPClient(responses: []), interval: 60, calendar: calendar
+        )
+        let snapshot = await service.scan(now: now)
+        context.expectEqual(snapshot.latestForecast?.id, "forecast")
+        context.expectEqual(snapshot.latestForecast?.expectedAt, expected)
     }
 
     test("ResetRadarService keeps the last reset when a later page is empty") { context in
@@ -2885,7 +2918,8 @@ func radarSignal(
     publishedAt: Date,
     kind: ResetSignalKind = .reset,
     severity: String? = nil,
-    verified: Bool = true
+    verified: Bool = true,
+    expectedAt: Date? = nil
 ) -> ResetSignal {
     ResetSignal(
         id: id,
@@ -2896,6 +2930,7 @@ func radarSignal(
         title: title,
         summary: "",
         publishedAt: publishedAt,
+        expectedAt: expectedAt,
         url: nil,
         verified: verified,
         scope: "所有付费用户",

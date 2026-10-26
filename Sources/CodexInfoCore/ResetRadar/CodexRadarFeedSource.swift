@@ -36,6 +36,7 @@ public struct CodexRadarFeedSource: ResetSource {
             let kind: ResetSignalKind = (verified || Self.isCompletion(title: title)) ? .reset : .verifying
             let scope = Self.scope(in: description)
             let url = Self.linkURL(itemLink: item["link"], description: description)
+            let publishedAt = DateParsing.rfc822(item["pubDate"])
             return ResetSignal(
                 id: "\(id):\(item["guid"] ?? title)",
                 sourceId: id,
@@ -44,7 +45,8 @@ public struct CodexRadarFeedSource: ResetSource {
                 severity: nil,
                 title: title,
                 summary: description.trimmingCharacters(in: .whitespacesAndNewlines),
-                publishedAt: DateParsing.rfc822(item["pubDate"]),
+                publishedAt: publishedAt,
+                expectedAt: Self.expectedAt(in: description, publishedAt: publishedAt),
                 url: url,
                 verified: verified,
                 scope: scope,
@@ -52,6 +54,59 @@ public struct CodexRadarFeedSource: ResetSource {
                 rawHash: PayloadHash.short(response.data)
             )
         }
+    }
+
+    /// The Beijing arrival time stated by an announcement.
+    ///
+    /// The feed writes lines such as `预计到达：北京时间10月24日02:00前`.
+    /// Only lines with `预计到达` are read, so the disclaimers of a completed
+    /// record ("原预计…不作为完成时间") do not become a forecast time.
+    static func expectedAt(in description: String, publishedAt: Date?) -> Date? {
+        for line in description.split(whereSeparator: \.isNewline) where line.contains("预计到达") {
+            guard let date = beijingDate(in: String(line), publishedAt: publishedAt) else { continue }
+            return date
+        }
+        return nil
+    }
+
+    /// Parses one `北京时间…` timestamp, with an optional explicit year.
+    private static func beijingDate(in line: String, publishedAt: Date?) -> Date? {
+        let pattern = #"北京时间\s*(?:(\d{4})\s*年)?\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})[:：](\d{2})"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let text = line as NSString
+        guard let match = expression.firstMatch(
+            in: line,
+            range: NSRange(location: 0, length: text.length)
+        ) else {
+            return nil
+        }
+        func value(_ index: Int) -> Int? {
+            let range = match.range(at: index)
+            guard range.location != NSNotFound else { return nil }
+            return Int(text.substring(with: range))
+        }
+        guard let month = value(2), let day = value(3), let hour = value(4), let minute = value(5) else {
+            return nil
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai") ?? .current
+        let publicationYear = publishedAt.map { calendar.component(.year, from: $0) }
+            ?? calendar.component(.year, from: Date())
+        var components = DateComponents()
+        components.timeZone = calendar.timeZone
+        components.year = value(1) ?? publicationYear
+        components.month = month
+        components.day = day
+        components.hour = hour
+        components.minute = minute
+        components.second = 0
+        guard var date = calendar.date(from: components) else { return nil }
+        if value(1) == nil, let publishedAt,
+           date < publishedAt.addingTimeInterval(-86_400) {
+            components.year = (components.year ?? publicationYear) + 1
+            date = calendar.date(from: components) ?? date
+        }
+        return date
     }
 
     /// The item title reports that the reset landed.

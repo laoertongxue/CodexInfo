@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mockSnapshot } from "../src/data/mockSnapshot";
+import { mockActiveForecastSnapshot, mockSnapshot } from "../src/data/mockSnapshot";
 import type { ClientUsageSnapshot } from "../src/data/types";
 
 /** The client panels the native bridge of the test pushes. */
@@ -20,6 +20,7 @@ const mockClients: ClientUsageSnapshot[] = [
     updatedAt: "2026-10-25T03:38:00.000Z",
     tone: "normal",
     note: "Qoder 刷新账户用量时更新；数据来自本地日志。",
+    outputRate: { samples: 0, basis: "Qoder 本地日志未记录输出耗时" },
   },
   {
     client: "miniMaxCode",
@@ -44,6 +45,14 @@ const mockClients: ClientUsageSnapshot[] = [
       { id: "card-2", source: "mcode_signin", label: "完全重置", expiresAt: "2026-10-27T08:00:00.000Z", grantedAt: "2026-10-12T18:33:21.814Z" },
       { id: "card-3", source: "mcode_signin", label: "完全重置", expiresAt: "2026-10-28T08:00:00.000Z", grantedAt: "2026-10-13T18:37:28.663Z" },
     ],
+    outputRate: {
+      latest: 193.3,
+      median: 151,
+      samples: 20,
+      window: "最近 20 次调用",
+      basis: "按解码耗时",
+      updatedAt: "2026-10-26T03:57:16.000Z",
+    },
   },
   {
     client: "openCode",
@@ -70,6 +79,14 @@ const mockClients: ClientUsageSnapshot[] = [
         "opencode/space-bunny-free",
       ],
     },
+    outputRate: {
+      latest: 172.3,
+      median: 154.9,
+      samples: 20,
+      window: "最近 20 条消息",
+      basis: "按生成片段耗时",
+      updatedAt: "2026-10-26T06:21:24.000Z",
+    },
   },
   {
     client: "deepSeekHarness",
@@ -81,6 +98,14 @@ const mockClients: ClientUsageSnapshot[] = [
     source: "官方钱包",
     updatedAt: "2026-10-25T03:38:00.000Z",
     tone: "normal",
+    outputRate: {
+      latest: 191.8,
+      median: 170,
+      samples: 3,
+      window: "最近 3 个会话",
+      basis: "按解码耗时",
+      updatedAt: "2026-10-23T12:00:00.000Z",
+    },
   },
 ];
 
@@ -117,21 +142,21 @@ test("the native host announces itself and takes the messages of the panel", asy
   await page.waitForFunction(() => Boolean(window.CodexInfoHost));
   expect((await bridgeMessages(page))[0]).toEqual({ type: "ready" });
 
-  await page.evaluate((snapshot) => window.CodexInfoHost?.render(snapshot), mockSnapshot);
+  await page.evaluate((snapshot) => window.CodexInfoHost?.render(snapshot), mockActiveForecastSnapshot);
   await expect(page.getByTestId("weekly-quota")).toContainText("84%");
 
   await page.getByRole("button", { name: "刷新" }).click();
   await page.getByRole("button", { name: "立即扫描" }).click();
   await page.getByRole("button", { name: "设置" }).click();
   await page.getByRole("button", { name: "关闭" }).click();
-  await page.getByRole("button", { name: /查看原始出处/ }).click();
+  await page.getByRole("button", { name: /查看原帖/ }).click();
 
   const messages = await bridgeMessages(page);
   expect(messages).toContainEqual({ type: "refresh" });
   expect(messages).toContainEqual({ type: "scan" });
   expect(messages).toContainEqual({ type: "openSettings" });
   expect(messages).toContainEqual({ type: "close" });
-  expect(messages).toContainEqual({ type: "openURL", url: "https://codex-reset.com/zh/radar" });
+  expect(messages).toContainEqual({ type: "openURL", url: "https://x.com/example" });
 
   await page.evaluate(() => window.CodexInfoHost?.error("快照不可用"));
   await expect(page.getByTestId("panel")).toContainText("快照不可用");
@@ -184,6 +209,42 @@ test("the native host switches between the client panels", async ({ page }) => {
 
   await page.getByRole("tab", { name: "Codex" }).click();
   await expect(page.getByTestId("weekly-quota")).toContainText("84%");
+});
+
+test("each client panel shows the output rate or its missing reason", async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { webkit: unknown }).webkit = {
+      messageHandlers: {
+        codexInfo: { postMessage: () => undefined },
+      },
+    };
+  });
+  await page.goto("/");
+  await page.waitForFunction(() => Boolean(window.CodexInfoHost));
+  await page.evaluate((snapshot) => window.CodexInfoHost?.render(snapshot), mockSnapshot);
+  await page.evaluate((clients) => window.CodexInfoHost?.renderClients?.(clients), mockClients);
+
+  await page.getByRole("tab", { name: "Qoder" }).click();
+  await expect(page.getByTestId("client-output-rate-recent")).toHaveText("—");
+  await expect(page.getByTestId("client-output-rate-note")).toContainText("未记录");
+
+  await page.getByRole("tab", { name: "MiniMax" }).click();
+  await expect(page.getByTestId("client-output-rate-recent")).toHaveText("151.0 tok/s");
+  await expect(page.getByTestId("client-output-rate-latest")).toContainText("193.3 tok/s");
+  await expect(page.getByTestId("client-output-rate-latest")).toContainText("20 个样本");
+  await expect(page.getByTestId("client-output-rate-note")).toContainText("按解码耗时");
+
+  await page.getByRole("tab", { name: "OpenCode" }).click();
+  await expect(page.getByTestId("client-output-rate-recent")).toHaveText("154.9 tok/s");
+  await expect(page.getByTestId("client-output-rate-latest")).toContainText("172.3 tok/s");
+  await expect(page.getByTestId("client-output-rate-note")).toContainText("最近 20 条消息");
+  await expect(page.getByTestId("client-output-rate-note")).toContainText("按生成片段耗时");
+  await expect(page.getByTestId("client-output-rate-note")).toContainText("2026/10/26");
+
+  await page.getByRole("tab", { name: "DeepSeek" }).click();
+  await expect(page.getByTestId("client-output-rate-recent")).toHaveText("170.0 tok/s");
+  await expect(page.getByTestId("client-output-rate-latest")).toContainText("191.8 tok/s");
+  await expect(page.getByTestId("client-output-rate-note")).toContainText("最近 3 个会话");
 });
 
 test("the native host reports the panel height after a tab switch", async ({ page }) => {
@@ -251,10 +312,10 @@ test("the MCP host takes the snapshot from the server tools", async ({ page }) =
     )
     .toContain("scan_reset_sources");
 
-  await panel.getByRole("button", { name: /查看原始出处/ }).click();
+  await panel.getByRole("button", { name: /查看原帖/ }).click();
   await expect
     .poll(async () => (await hostCalls(page)).find((call) => call.method === "ui/open-link")?.params?.url)
-    .toBe("https://codex-reset.com/zh/radar");
+    .toBe("https://x.com/example");
 });
 
 /**
@@ -270,7 +331,7 @@ function mcpHostPage(panelURL: string): string {
   <body>
     <iframe id="app" src="${panelURL}" width="400" height="800"></iframe>
     <script>
-      const snapshot = ${JSON.stringify(mockSnapshot)};
+      const snapshot = ${JSON.stringify(mockActiveForecastSnapshot)};
       const iframe = document.getElementById("app");
       window.__calls = [];
       window.addEventListener("message", (event) => {

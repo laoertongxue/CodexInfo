@@ -1,5 +1,46 @@
 import Foundation
 
+/// The recent output rate of a client.
+///
+/// The samples come from the client's own local records. A client that does
+/// not record the duration of its output carries `samples == 0` and a `basis`
+/// that explains why; the panel never invents a rate.
+public struct ClientOutputRate: Codable, Equatable, Sendable {
+    /// The rate of the newest usable sample, in output tokens per second.
+    public var latest: Double?
+    /// The median of the recent usable samples.
+    public var median: Double?
+    /// The number of samples behind `median`.
+    public var samples: Int
+    /// The sample window, e.g. `最近 20 次调用`.
+    public var window: String?
+    /// The measurement basis, e.g. `按解码耗时`.
+    public var basis: String
+    /// The moment of the newest sample.
+    public var updatedAt: Date?
+
+    public init(
+        latest: Double? = nil,
+        median: Double? = nil,
+        samples: Int,
+        window: String? = nil,
+        basis: String,
+        updatedAt: Date? = nil
+    ) {
+        self.latest = latest
+        self.median = median
+        self.samples = samples
+        self.window = window
+        self.basis = basis
+        self.updatedAt = updatedAt
+    }
+
+    /// A rate the client cannot measure locally.
+    public static func unavailable(_ basis: String) -> ClientOutputRate {
+        ClientOutputRate(samples: 0, basis: basis)
+    }
+}
+
 /// One quota window of a client, shown as used / total points.
 public struct ClientQuotaLimit: Codable, Equatable, Sendable, Identifiable {
     /// `fiveHour` or `weekly`.
@@ -122,7 +163,7 @@ public struct OpenCodeUsage: Codable, Equatable, Sendable {
 /// panel per client. The compact panel only carries what the client exposes:
 /// a quota or a balance, the model, the reset or expiry, and the source.
 public struct ClientUsageSnapshot: Codable, Equatable, Sendable {
-    /// The identifier of the client: `qoder`, `miniMaxCode` or
+    /// The identifier of the client: `qoder`, `miniMaxCode`, `openCode` or
     /// `deepSeekHarness`.
     public var client: String
     /// The name shown in the tab and the header.
@@ -162,6 +203,8 @@ public struct ClientUsageSnapshot: Codable, Equatable, Sendable {
     public var limits: [ClientQuotaLimit]?
     /// The extra OpenCode Go/Zen/free-model state.
     public var openCode: OpenCodeUsage?
+    /// The recent output rate of the client's own local records.
+    public var outputRate: ClientOutputRate?
 
     public init(
         client: String,
@@ -181,7 +224,8 @@ public struct ClientUsageSnapshot: Codable, Equatable, Sendable {
         resetCards: [ClientResetCard]? = nil,
         resetCardTotal: Int? = nil,
         limits: [ClientQuotaLimit]? = nil,
-        openCode: OpenCodeUsage? = nil
+        openCode: OpenCodeUsage? = nil,
+        outputRate: ClientOutputRate? = nil
     ) {
         self.client = client
         self.name = name
@@ -201,5 +245,6 @@ public struct ClientUsageSnapshot: Codable, Equatable, Sendable {
         self.resetCardTotal = resetCardTotal
         self.limits = limits
         self.openCode = openCode
+        self.outputRate = outputRate
     }
 }

@@ -19,58 +19,6 @@ const SOURCE_LABEL: Record<SourceState, string> = {
   down: "不可用",
 };
 
-/**
- * The official status source is only a side signal: a service incident never
- * proves a quota reset, so it never confirms one.
- */
-const OFFICIAL_STATUS_SOURCE_IDS = new Set(["openai-status"]);
-const OFFICIAL_STATUS_SOURCE_NAMES = new Set(["官方状态"]);
-
-export function isOfficialStatusSource(name: string): boolean {
-  return OFFICIAL_STATUS_SOURCE_IDS.has(name) || OFFICIAL_STATUS_SOURCE_NAMES.has(name);
-}
-
-/** The reset-class sources that carry a record of the same reset. */
-export function confirmingResetSources(signal: ResetSignal): string[] {
-  return signal.confirmingSources.filter((name) => !isOfficialStatusSource(name));
-}
-
-/**
- * Whether a reset group is confirmed.
- *
- * Only two independent reset sources confirm a group; a single source is
- * shown as "单一来源".
- */
-export function isConfirmedReset(signal: ResetSignal): boolean {
-  return confirmingResetSources(signal).length >= 2;
-}
-
-/** How the panel classifies a signal of the radar. */
-export type SignalTone = "strong" | "degraded" | "incident" | "none";
-
-/**
- * The tone of a signal.
- *
- * A strong signal is a verified reset that the source marked as `strong`;
- * `degraded` and `incident` are the two other severities of the vocabulary
- * and never count as a reset confirmation.
- */
-export function signalTone(signal: ResetSignal): SignalTone {
-  const severity = (signal.severity ?? "").toLowerCase();
-  if (severity === "degraded") return "degraded";
-  if (severity === "incident") return "incident";
-  if (signal.kind === "reset" && signal.verified && severity === "strong") return "strong";
-  return "none";
-}
-
-/** The label of a tone: 强信号 / 源不可用 / 服务故障. */
-const TONE_LABEL: Record<SignalTone, string> = {
-  strong: "强信号",
-  degraded: "源不可用",
-  incident: "服务故障",
-  none: "",
-};
-
 /** Whether the area carries a value that may be shown. */
 function usable(state: DataState): boolean {
   return state !== "error" && state !== "loading";
@@ -102,11 +50,6 @@ function FreshnessHint({ state }: { state: DataState }) {
   const hint = freshnessHint(state);
   if (!hint) return null;
   return <span className="tag">{hint}</span>;
-}
-
-function SignalBadge({ tone }: { tone: SignalTone }) {
-  if (tone === "none") return null;
-  return <span className={`tag tone-${tone}`}>{TONE_LABEL[tone]}</span>;
 }
 
 /** The clients of the switcher, in the order of the tabs. */
@@ -394,6 +337,41 @@ function ClientPanel({
               </Section>
             )}
 
+            <Section id="client-output-rate">
+              <div className="row">
+                <strong>输出速率</strong>
+                <span className="tiny muted">
+                  近期中位{" "}
+                  <strong data-testid="client-output-rate-recent">
+                    {client.outputRate && client.outputRate.samples > 0
+                      ? formatRate(client.outputRate.median)
+                      : DASH}
+                  </strong>
+                </span>
+              </div>
+              {client.outputRate && client.outputRate.samples > 0 ? (
+                <div className="row tiny muted">
+                  <span>最近一次</span>
+                  <span data-testid="client-output-rate-latest">
+                    {formatRate(client.outputRate.latest)} · {client.outputRate.samples} 个样本
+                  </span>
+                </div>
+              ) : null}
+              <div className="tiny muted" data-testid="client-output-rate-note">
+                {client.outputRate && client.outputRate.samples > 0
+                  ? [
+                      client.outputRate.basis,
+                      client.outputRate.window,
+                      client.outputRate.updatedAt
+                        ? `更新于 ${formatDateTime(client.outputRate.updatedAt)}`
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")
+                  : client.outputRate?.basis ?? "本地未记录输出耗时"}
+              </div>
+            </Section>
+
             {(client.model || client.effort) && (
               <Section id="client-model-section">
                 <div className="row">
@@ -555,41 +533,30 @@ function CodexPanel({
       ? Math.round((session.contextTokens / session.contextWindow) * 100)
       : null;
 
-  const statusSignal =
-    radar.latestConfirmed?.kind === "status"
-      ? radar.latestConfirmed
-      : radar.recent.find((signal) => signal.kind === "status") ?? null;
-  const confirmedReset =
-    radar.latestConfirmed?.kind === "reset" ? radar.latestConfirmed : null;
-  const latestResetCandidate = radar.latestReset ?? null;
-  // A payload from before `latestReset` existed only carries `latestConfirmed`.
-  // Keep the confirmed record when it is at least as new as the single-source
-  // record, so an unverified fixture never becomes verified by accident.
-  const latestReset =
-    confirmedReset != null &&
-    (latestResetCandidate == null ||
-      new Date(confirmedReset.publishedAt ?? 0).getTime() >=
-        new Date(latestResetCandidate.publishedAt ?? 0).getTime())
-      ? confirmedReset
-      : latestResetCandidate ??
-        confirmedReset ??
-        radar.recent.find((signal) => signal.kind === "reset") ??
-        null;
-  const latestForecast =
-    radar.latestForecast ??
-    radar.recent.find((signal) => signal.kind === "verifying") ??
-    null;
-  const latest = latestReset;
-  const tone = latest ? signalTone(latest) : "none";
-  const statusTone = statusSignal ? signalTone(statusSignal) : "none";
-  const confirmations = latest ? confirmingResetSources(latest) : [];
-  const confirmed = latest ? isConfirmedReset(latest) : false;
-  const forecastRelevant =
-    latestForecast != null &&
-    (latest == null ||
-      latestForecast.publishedAt == null ||
-      latest.publishedAt == null ||
-      new Date(latestForecast.publishedAt).getTime() >= new Date(latest.publishedAt).getTime());
+  // A reset signal is only current when its expected time is still ahead (or
+  // just passed) or, without an expected time, it was published recently.
+  // Completed records and retired forecasts never occupy the verdict.
+  const forecastCandidates = Array.from(
+    new Map(
+      [radar.latestForecast, ...radar.recent]
+        .filter((signal): signal is ResetSignal => signal != null && signal.kind === "verifying")
+        .map((signal) => [signal.id, signal])
+    ).values()
+  ).filter((signal) => {
+    if (signal.expectedAt) {
+      const expected = new Date(signal.expectedAt).getTime();
+      if (!Number.isNaN(expected)) return expected >= now - 30 * 60_000;
+    }
+    if (!signal.publishedAt) return false;
+    const published = new Date(signal.publishedAt).getTime();
+    return !Number.isNaN(published) && published >= now - 24 * 3600_000;
+  });
+  const activeForecast =
+    forecastCandidates.sort((lhs, rhs) => {
+      const left = new Date(lhs.expectedAt ?? lhs.publishedAt ?? 0).getTime();
+      const right = new Date(rhs.expectedAt ?? rhs.publishedAt ?? 0).getTime();
+      return right - left;
+    })[0] ?? null;
   const weeklyWindowMinutes =
     quota.weeklyWindowMinutes != null && quota.weeklyWindowMinutes > 0
       ? quota.weeklyWindowMinutes
@@ -697,23 +664,47 @@ function CodexPanel({
             </button>
           </div>
 
+          {activeForecast ? (
+            <div className="quote" data-testid="reset-signal">
+              <div className="row tiny">
+                <span>
+                  <strong>有重置信号</strong>
+                  {activeForecast.expectedAt
+                    ? ` · 预计北京时间 ${formatBeijingDateTime(activeForecast.expectedAt)}`
+                    : " · 信源未给出具体时间"}
+                </span>
+                <span className="tag">预告</span>
+              </div>
+              <div className="tiny muted" data-testid="reset-signal-title">
+                {activeForecast.title}
+              </div>
+              <div className="tiny muted" data-testid="reset-signal-source">
+                信源：{activeForecast.sourceName} · 发布于{" "}
+                {formatBeijingDateTime(activeForecast.publishedAt)}（北京时间）
+              </div>
+              {activeForecast.url && (
+                <button className="link" onClick={() => host.current?.openURL(activeForecast.url!)}>
+                  查看原帖 ↗
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="quote" data-testid="reset-empty">
+              <div className="row tiny">
+                <strong>暂无重置信息/信号</strong>
+              </div>
+            </div>
+          )}
+
           <div className="quote" data-testid="quota-reset-window">
             <div className="row tiny">
-              <span className="muted">你的周额度窗口</span>
+              <span className="muted">本机周额度</span>
               {justReset ? (
                 <span className="tag tone-strong" data-testid="just-reset">
                   刚刚重置
                 </span>
               ) : null}
             </div>
-            {lastResetMs != null && sinceLastResetMs != null && sinceLastResetMs >= 0 ? (
-              <div className="row tiny">
-                <span className="muted">上次重置</span>
-                <span data-testid="last-reset-at">
-                  {formatBeijingDateTime(lastResetMs)}（北京时间）
-                </span>
-              </div>
-            ) : null}
             {nextResetMs != null ? (
               <div className="row tiny">
                 <span className="muted">下次重置</span>
@@ -725,8 +716,13 @@ function CodexPanel({
             ) : (
               <div className="tiny muted">周额度重置时间未提供</div>
             )}
-            {justReset ? (
-              <div className="tiny muted">本机周额度刚刚重置。</div>
+            {justReset && lastResetMs != null ? (
+              <div className="row tiny">
+                <span className="muted">上次重置</span>
+                <span data-testid="last-reset-at">
+                  {formatBeijingDateTime(lastResetMs)}（北京时间）
+                </span>
+              </div>
             ) : null}
           </div>
 
@@ -739,98 +735,6 @@ function CodexPanel({
           {scanState === "scanning" || scanMessage ? (
             <div className="tiny muted" data-testid="scan-status">
               {scanState === "scanning" ? "扫描中…" : scanMessage}
-            </div>
-          ) : null}
-
-          {latest && tone === "strong" ? (
-            <div className="quote" data-testid="reset-confirmation">
-              <div className="row tiny">
-                <span>
-                  {latest.title}
-                  {latest.summary ? `：${latest.summary}` : ""}
-                </span>
-                <SignalBadge tone={tone} />
-              </div>
-              <div className="tiny muted" data-testid="confirmation-state">
-                发布于 {formatBeijingDateTime(latest.publishedAt)}（北京时间） ·{" "}
-                {confirmed
-                  ? `来源已确认：${confirmations.join("、")}`
-                  : `单一来源：${latest.sourceName}`}
-              </div>
-              <div className="row tiny">
-                <span className="muted">适用范围</span>
-                <span>{latest.scope ?? DASH}</span>
-              </div>
-              {latest.url && (
-                <button className="link" onClick={() => host.current?.openURL(latest.url!)}>
-                  查看原始出处 ↗
-                </button>
-              )}
-            </div>
-          ) : latest ? (
-            <div className="quote" data-testid="reset-notice">
-              <div className="row tiny">
-                <span>
-                  {latest.title}
-                  {latest.summary ? `：${latest.summary}` : ""}
-                </span>
-                <SignalBadge tone={tone} />
-              </div>
-              <div className="tiny muted" data-testid="confirmation-state">
-                {formatBeijingDateTime(latest.publishedAt)}（北京时间） · {latest.sourceName} ·{" "}
-                {confirmed ? "来源已确认" : "单一来源"} ·{" "}
-                {tone === "incident"
-                  ? "服务故障不等于额度重置"
-                  : tone === "degraded"
-                    ? "来源暂不可用，未确认重置"
-                    : "未确认的重置记录"}
-              </div>
-              {latest.url && (
-                <button className="link" onClick={() => host.current?.openURL(latest.url!)}>
-                  查看来源 ↗
-                </button>
-              )}
-            </div>
-          ) : statusSignal ? (
-            <div className="quote" data-testid="reset-notice">
-              <div className="row tiny">
-                <span>{statusSignal.title}</span>
-                <SignalBadge tone={statusTone} />
-              </div>
-              <div className="tiny muted">
-                {formatBeijingDateTime(statusSignal.publishedAt)}（北京时间） ·{" "}
-                {statusSignal.sourceName} · 服务状态，不是重置记录
-              </div>
-              {statusSignal.url && (
-                <button className="link" onClick={() => host.current?.openURL(statusSignal.url!)}>
-                  查看来源 ↗
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="tiny muted" data-testid="reset-empty">
-              最近 30 天没有社区重置记录
-            </div>
-          )}
-
-          {forecastRelevant && latestForecast ? (
-            <div className="quote" data-testid="reset-forecast">
-              <div className="row tiny">
-                <span>{latestForecast.title}</span>
-                <span className="tag">预告</span>
-              </div>
-              <div className="tiny muted">
-                {formatBeijingDateTime(latestForecast.publishedAt)} 发布 ·{" "}
-                {latestForecast.sourceName} · 单一来源
-              </div>
-              {latestForecast.summary && latestForecast.summary !== latestForecast.title ? (
-                <div className="tiny muted">{latestForecast.summary}</div>
-              ) : null}
-              {latestForecast.url && (
-                <button className="link" onClick={() => host.current?.openURL(latestForecast.url!)}>
-                  查看原帖 ↗
-                </button>
-              )}
             </div>
           ) : null}
 

@@ -36,7 +36,8 @@ public struct QoderUsageProvider: Sendable {
                 source: "本地用量日志",
                 updatedAt: Date(),
                 tone: .muted,
-                note: "Qoder 刷新账户用量时更新；数据来自本地日志。"
+                note: "Qoder 刷新账户用量时更新；数据来自本地日志。",
+                outputRate: .unavailable("Qoder 本地日志未记录输出耗时")
             )
         }
         let tone = reading.exceeded
@@ -54,7 +55,8 @@ public struct QoderUsageProvider: Sendable {
             updatedAt: reading.fetchedAt ?? Date(),
             tone: tone,
             note: "Qoder 刷新账户用量时更新；数据来自本地日志。",
-            limits: reading.limits
+            limits: reading.limits,
+            outputRate: .unavailable("Qoder 本地日志未记录输出耗时")
         )
     }
 }

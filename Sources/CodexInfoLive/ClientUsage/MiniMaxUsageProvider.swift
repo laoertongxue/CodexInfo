@@ -9,6 +9,7 @@ import CodexInfoCore
 public struct MiniMaxUsageProvider: Sendable {
     private let authURL: URL
     private let configURL: URL
+    private let databaseURL: URL
     private let http: any HTTPClient
     private let baseURL: URL
     private let now: @Sendable () -> Date
@@ -18,18 +19,22 @@ public struct MiniMaxUsageProvider: Sendable {
     /// - Parameters:
     ///   - authURL: the OAuth store of the app.
     ///   - configURL: the model settings of the app.
+    ///   - databaseURL: the local runtime database that carries the token
+    ///     usage and decode durations.
     ///   - http: the client of the request.
     ///   - baseURL: the open platform origin.
     ///   - now: the clock that checks the expiry of the token.
     public init(
         authURL: URL = MiniMaxUsageProvider.defaultAuthURL,
         configURL: URL = MiniMaxUsageProvider.defaultConfigURL,
+        databaseURL: URL = MiniMaxUsageProvider.defaultDatabaseURL,
         http: any HTTPClient,
         baseURL: URL = URL(string: "https://www.minimaxi.com")!,
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.authURL = authURL
         self.configURL = configURL
+        self.databaseURL = databaseURL
         self.http = http
         self.baseURL = baseURL
         self.now = now
@@ -53,12 +58,22 @@ public struct MiniMaxUsageProvider: Sendable {
             .appendingPathComponent("config.yaml")
     }
 
+    /// The local runtime database of MiniMax Code (CN).
+    public static var defaultDatabaseURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".minimax", isDirectory: true)
+            .appendingPathComponent("v2", isDirectory: true)
+            .appendingPathComponent("sqlite", isDirectory: true)
+            .appendingPathComponent("runtime-state.sqlite")
+    }
+
     /// The panel data of the coding plan.
     public func snapshot() async -> ClientUsageSnapshot? {
         let settings = MiniMaxSettings.read(from: configURL)
         let moment = now()
+        let outputRate = MiniMaxOutputRateReader.read(databaseURL: databaseURL)
         guard let token = MiniMaxCredentials.read(from: authURL, now: moment) else {
-            return unavailable(settings: settings, at: moment)
+            return unavailable(settings: settings, at: moment, outputRate: outputRate)
         }
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/api/openplatform/coding_plan/remains"))
         request.httpMethod = "GET"
@@ -70,7 +85,7 @@ public struct MiniMaxUsageProvider: Sendable {
             let response = try await http.send(request)
             guard response.statusCode == 200,
                   let reading = MiniMaxQuota.reading(response.data) else {
-                return unavailable(settings: settings, at: moment)
+                return unavailable(settings: settings, at: moment, outputRate: outputRate)
             }
             let resetCards = await fetchResetCards(token: token)
             return ClientUsageSnapshot(
@@ -89,10 +104,11 @@ public struct MiniMaxUsageProvider: Sendable {
                 note: "5 小时与周额度来自官方接口；只读展示。",
                 resetCards: resetCards?.cards,
                 resetCardTotal: resetCards?.total,
-                limits: reading.limits
+                limits: reading.limits,
+                outputRate: outputRate
             )
         } catch {
-            return unavailable(settings: settings, at: moment)
+            return unavailable(settings: settings, at: moment, outputRate: outputRate)
         }
     }
 
@@ -126,7 +142,11 @@ public struct MiniMaxUsageProvider: Sendable {
         }
     }
 
-    private func unavailable(settings: MiniMaxSettings, at moment: Date) -> ClientUsageSnapshot {
+    private func unavailable(
+        settings: MiniMaxSettings,
+        at moment: Date,
+        outputRate: ClientOutputRate
+    ) -> ClientUsageSnapshot {
         ClientUsageSnapshot(
             client: "miniMaxCode",
             name: "MiniMax",
@@ -136,7 +156,8 @@ public struct MiniMaxUsageProvider: Sendable {
             source: "官方额度接口",
             updatedAt: moment,
             tone: .muted,
-            note: "额度接口暂不可用；检查 MiniMax Code 的登录状态。"
+            note: "额度接口暂不可用；检查 MiniMax Code 的登录状态。",
+            outputRate: outputRate
         )
     }
 }

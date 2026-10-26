@@ -30,6 +30,8 @@ public struct ResetSignal: Codable, Equatable, Sendable, Identifiable {
     public let title: String
     public let summary: String
     public let publishedAt: Date?
+    /// The moment the source expects the reset to land, when it publishes one.
+    public let expectedAt: Date?
     public let url: URL?
     public let verified: Bool
     public let scope: String?
@@ -48,6 +50,7 @@ public struct ResetSignal: Codable, Equatable, Sendable, Identifiable {
         title: String,
         summary: String,
         publishedAt: Date? = nil,
+        expectedAt: Date? = nil,
         url: URL? = nil,
         verified: Bool,
         scope: String? = nil,
@@ -62,6 +65,7 @@ public struct ResetSignal: Codable, Equatable, Sendable, Identifiable {
         self.title = title
         self.summary = summary
         self.publishedAt = publishedAt
+        self.expectedAt = expectedAt
         self.url = url
         self.verified = verified
         self.scope = scope
