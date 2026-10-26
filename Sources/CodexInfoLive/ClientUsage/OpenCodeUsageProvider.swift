@@ -11,6 +11,7 @@ public struct OpenCodeUsageProvider: Sendable {
 
     private let authURL: URL
     private let zenTokenURL: URL
+    private let databaseURL: URL
     private let goHTTP: any HTTPClient
     private let zenHTTP: any HTTPClient
     private let now: @Sendable () -> Date
@@ -19,6 +20,7 @@ public struct OpenCodeUsageProvider: Sendable {
     public init(
         authURL: URL = OpenCodeUsageProvider.defaultAuthURL,
         zenTokenURL: URL = OpenCodeUsageProvider.defaultZenTokenURL,
+        databaseURL: URL = OpenCodeUsageProvider.defaultDatabaseURL,
         goHTTP: any HTTPClient,
         zenHTTP: any HTTPClient,
         now: @escaping @Sendable () -> Date = { Date() },
@@ -26,6 +28,7 @@ public struct OpenCodeUsageProvider: Sendable {
     ) {
         self.authURL = authURL
         self.zenTokenURL = zenTokenURL
+        self.databaseURL = databaseURL
         self.goHTTP = goHTTP
         self.zenHTTP = zenHTTP
         self.now = now
@@ -51,10 +54,27 @@ public struct OpenCodeUsageProvider: Sendable {
             .appendingPathComponent("auth.json")
     }
 
+    /// The credential database of the OpenCode CLI.
+    public static var defaultDatabaseURL: URL {
+        let environment = ProcessInfo.processInfo.environment
+        let dataHome = environment["XDG_DATA_HOME"].map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+        } ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/share", isDirectory: true)
+        return dataHome
+            .appendingPathComponent("opencode", isDirectory: true)
+            .appendingPathComponent("opencode.db")
+    }
+
     /// The panel data of the current OpenCode account.
     public func snapshot() async -> ClientUsageSnapshot? {
         let moment = now()
-        let goKey = OpenCodeCredentials.goKey(from: authURL)
+        let credentials = OpenCodeCredentials.read(
+            authURL: authURL,
+            zenTokenURL: zenTokenURL,
+            databaseURL: databaseURL
+        )
+        let goKey = credentials.goKey
         var goWindows: [OpenCodeWindow]?
         var goState = "unavailable"
         var goNote: String?
@@ -75,7 +95,7 @@ public struct OpenCodeUsageProvider: Sendable {
             goNote = "未登录 OpenCode Go"
         }
 
-        let zen = await fetchZen(now: moment)
+        let zen = await fetchZen(stored: credentials.zenToken, now: moment)
         let models = await freeModels()
         let remaining = goWindows?.map { max(0, 100 - $0.usedPercent) }.min()
         let tone: ClientBadgeTone
@@ -139,8 +159,8 @@ public struct OpenCodeUsageProvider: Sendable {
         var state: String
     }
 
-    private func fetchZen(now: Date) async -> ZenOutcome {
-        guard let stored = OpenCodeZenToken.read(from: zenTokenURL) else {
+    private func fetchZen(stored: OpenCodeZenToken?, now: Date) async -> ZenOutcome {
+        guard let stored else {
             return ZenOutcome(balance: nil, state: "signedOut")
         }
         let token = await zenAccessToken(stored: stored, now: now)
@@ -212,8 +232,29 @@ public struct OpenCodeUsageProvider: Sendable {
     }
 }
 
-/// Reads the Go API key from the OpenCode auth store.
+/// The credentials the provider needs.
+struct OpenCodeCredentialsReading: Sendable {
+    var goKey: String?
+    var zenToken: OpenCodeZenToken?
+}
+
+/// Reads the Go key and the console token from OpenCode's own stores.
+///
+/// Current OpenCode builds write credentials to `opencode.db`; older builds
+/// and some setups still use `auth.json`. The database wins, then the legacy
+/// auth file, then the optional quota-sidebar token file.
 enum OpenCodeCredentials {
+    static func read(
+        authURL: URL,
+        zenTokenURL: URL,
+        databaseURL: URL
+    ) -> OpenCodeCredentialsReading {
+        let database = OpenCodeDatabase.credentials(databaseURL: databaseURL)
+        let goKey = databaseGoKey(database) ?? goKey(from: authURL)
+        let zen = databaseZenToken(database) ?? OpenCodeZenToken.read(from: zenTokenURL)
+        return OpenCodeCredentialsReading(goKey: goKey, zenToken: zen)
+    }
+
     static func goKey(from url: URL) -> String? {
         guard let data = try? Data(contentsOf: url),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -223,6 +264,79 @@ enum OpenCodeCredentials {
             return nil
         }
         return key
+    }
+
+    private static func databaseGoKey(_ values: [String: [String: Any]]) -> String? {
+        guard let key = values["opencode-go"]?["key"] as? String, !key.isEmpty else {
+            return nil
+        }
+        return key
+    }
+
+    private static func databaseZenToken(_ values: [String: [String: Any]]) -> OpenCodeZenToken? {
+        guard let object = values["opencode"] else { return nil }
+        let access = object["access"] as? String ?? ""
+        let refresh = object["refresh"] as? String ?? ""
+        guard !access.isEmpty || !refresh.isEmpty else { return nil }
+        let expires = (object["expires"] as? NSNumber).map {
+            Date(timeIntervalSince1970: $0.doubleValue / 1000)
+        }
+        return OpenCodeZenToken(
+            accessToken: access,
+            refreshToken: refresh,
+            expires: expires
+        )
+    }
+}
+
+/// Reads the active credentials from the OpenCode SQLite database.
+///
+/// The query only touches the `credential` table; conversation tables are
+/// never opened. The database is opened read-only and the command has a short
+/// timeout, so a large or locked database cannot stall the panel.
+enum OpenCodeDatabase {
+    static func credentials(databaseURL: URL) -> [String: [String: Any]] {
+        guard FileManager.default.fileExists(atPath: databaseURL.path),
+              FileManager.default.isExecutableFile(atPath: "/usr/bin/sqlite3") else {
+            return [:]
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [
+            "-readonly",
+            "-noheader",
+            "-separator",
+            "\t",
+            databaseURL.path,
+            "SELECT integration_id, value FROM credential WHERE active=1 AND integration_id IN ('opencode-go','opencode');",
+        ]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        let done = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in done.signal() }
+        do {
+            try process.run()
+        } catch {
+            return [:]
+        }
+        if done.wait(timeout: .now() + 3) == .timedOut {
+            process.terminate()
+            return [:]
+        }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        var result: [String: [String: Any]] = [:]
+        for line in String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline) {
+            guard let tab = line.firstIndex(of: "\t") else { continue }
+            let integration = String(line[..<tab])
+            let json = String(line[line.index(after: tab)...])
+            guard let jsonData = json.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                continue
+            }
+            result[integration] = object
+        }
+        return result
     }
 }
 

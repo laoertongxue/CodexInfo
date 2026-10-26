@@ -2,7 +2,7 @@ import Foundation
 
 public enum AppConstants {
     public static let appName = "CodexInfo"
-    public static let version = "0.1.4"
+    public static let version = "0.1.5"
     public static let bundleIdentifier = "com.laoer.codexinfo"
     public static let supportDirectoryName = "CodexInfo"
     public static let codexHomeEnvironmentKey = "CODEX_HOME"

@@ -351,6 +351,7 @@ func registerClientUsageTests() {
         let provider = OpenCodeUsageProvider(
             authURL: auth,
             zenTokenURL: zen,
+            databaseURL: directory.appendingPathComponent("missing.db"),
             goHTTP: go,
             zenHTTP: zenHTTP,
             now: { Date(timeIntervalSince1970: 1_790_000_000) },
@@ -402,6 +403,7 @@ func registerClientUsageTests() {
         let provider = OpenCodeUsageProvider(
             authURL: auth,
             zenTokenURL: directory.appendingPathComponent("missing-zen.json"),
+            databaseURL: directory.appendingPathComponent("missing.db"),
             goHTTP: go,
             zenHTTP: MockHTTPClient(error: HTTPError.blockedURL),
             now: { Date(timeIntervalSince1970: 1_790_000_000) },
@@ -441,6 +443,7 @@ func registerClientUsageTests() {
         let provider = OpenCodeUsageProvider(
             authURL: auth,
             zenTokenURL: zen,
+            databaseURL: directory.appendingPathComponent("missing.db"),
             goHTTP: go,
             zenHTTP: zenHTTP,
             now: { Date(timeIntervalSince1970: 1_790_000_000) },
@@ -465,6 +468,7 @@ func registerClientUsageTests() {
         let provider = OpenCodeUsageProvider(
             authURL: directory.appendingPathComponent("missing-auth.json"),
             zenTokenURL: directory.appendingPathComponent("missing-zen.json"),
+            databaseURL: directory.appendingPathComponent("missing.db"),
             goHTTP: go,
             zenHTTP: MockHTTPClient(error: HTTPError.blockedURL),
             now: { Date(timeIntervalSince1970: 1_790_000_000) },
@@ -476,6 +480,65 @@ func registerClientUsageTests() {
         context.expectEqual(snapshot?.openCode?.zenState, "signedOut")
         context.expectEqual(snapshot?.openCode?.freeModels, ["opencode/space-bunny-free"])
         context.expectEqual(go.requestCount, 0)
+    }
+
+    test("OpenCode usage prefers the active credential in the database") { context in
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let db = directory.appendingPathComponent("opencode.db")
+        let goValue = #"{"key":"tok_db_opencode","type":"key"}"#
+        let zenValue = #"{"access":"zen_db","refresh":"","expires":9999999999999,"type":"oauth"}"#
+        let sql = """
+        CREATE TABLE credential (id text PRIMARY KEY, integration_id text, label text NOT NULL, value text NOT NULL, connector_id text, method_id text, active integer, time_created integer NOT NULL, time_updated integer NOT NULL);
+        INSERT INTO credential VALUES ('c1','opencode-go','OpenCode Go','\(goValue)',NULL,NULL,1,0,0);
+        INSERT INTO credential VALUES ('c2','opencode','Default','\(zenValue)',NULL,NULL,1,0,0);
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
+        process.arguments = [db.path, sql]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            context.fail("the sqlite database was not created: \(error)")
+            return
+        }
+        guard process.terminationStatus == 0 else {
+            context.fail("sqlite exited with \(process.terminationStatus)")
+            return
+        }
+        let goJSON = #"{"usage":{"rolling":{"percent":0,"resetsAt":"2026-10-26T08:47:04Z"},"weekly":{"percent":0,"resetsAt":"2026-11-02T00:00:00Z"},"monthly":{"percent":21,"resetsAt":"2026-11-10T05:33:49Z"}}}"#
+        let go = PathHTTPClient(responses: [
+            ("zen/go/v1/usage", HTTPResponse(data: Data(goJSON.utf8), statusCode: 200)),
+        ])
+        let billing = #"{"availableMicroCents":"0"}"#
+        let zenHTTP = PathHTTPClient(responses: [
+            ("billing/status", HTTPResponse(data: Data(billing.utf8), statusCode: 200)),
+        ])
+        let provider = OpenCodeUsageProvider(
+            authURL: directory.appendingPathComponent("missing-auth.json"),
+            zenTokenURL: directory.appendingPathComponent("missing-zen.json"),
+            databaseURL: db,
+            goHTTP: go,
+            zenHTTP: zenHTTP,
+            now: { Date(timeIntervalSince1970: 1_790_000_000) },
+            freeModels: { [] }
+        )
+        let snapshot = await provider.snapshot()
+        context.expectEqual(snapshot?.openCode?.goState, "active")
+        context.expectEqual(snapshot?.quotaPercent, 79)
+        context.expectEqual(snapshot?.openCode?.zenState, "signedIn")
+        context.expectEqual(snapshot?.openCode?.zenBalance, "$0.00")
+        context.expectEqual(
+            go.requests.first?.value(forHTTPHeaderField: "Authorization"),
+            "Bearer tok_db_opencode"
+        )
+        context.expectEqual(
+            zenHTTP.requests.first?.value(forHTTPHeaderField: "Authorization"),
+            "Bearer zen_db"
+        )
     }
 
 }
