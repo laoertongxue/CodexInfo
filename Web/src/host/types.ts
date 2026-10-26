@@ -10,8 +10,6 @@ export interface HostHandlers {
   onSnapshot: (snapshot: UsageSnapshot) => void;
   /** The other clients; only the native host pushes them. */
   onClients: (clients: ClientUsageSnapshot[]) => void;
-  /** The native app asks the panel to show a client tab. */
-  onSelectClient?: (client: string) => void;
   onError: (message: string) => void;
 }
 

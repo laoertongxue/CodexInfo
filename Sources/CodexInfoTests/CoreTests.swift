@@ -2654,9 +2654,6 @@ func registerCoreTests() {
         context.expectEqual(ClientBadgeFormatter.effortLabel("xhigh"), "极高")
         context.expectEqual(ClientBadgeFormatter.effortLabel("high"), "高")
         context.expectEqual(ClientBadgeFormatter.effortLabel(nil), nil)
-        context.expectEqual(ClientBadgeFormatter.sessionLabel(isActive: false, rate: 45), "会话 —")
-        context.expectEqual(ClientBadgeFormatter.sessionLabel(isActive: true, rate: 45.4), "45 tok/s")
-        context.expectEqual(ClientBadgeFormatter.sessionLabel(isActive: true, rate: nil), "生成中")
     }
 
     test("Client badge tone follows the quota and the verdict") { context in

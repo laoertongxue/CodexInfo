@@ -5,20 +5,19 @@ import CodexInfoLive
 
 /// The data of the clients that are not Codex.
 ///
-/// The store feeds the compact panel and the overlay from one read, so the
-/// tab and the badge always show the same number. The panel's refresh (and its
+/// The store feeds the compact client panels. The panel's refresh (and its
 /// 30-second tick) asks the store for a new read.
 @MainActor
 final class ClientUsageStore: ObservableObject {
     /// The last snapshot of every client.
-    @Published private(set) var snapshots: [ClientOverlayTarget: ClientUsageSnapshot] = [:]
+    @Published private(set) var snapshots: [ClientID: ClientUsageSnapshot] = [:]
 
-    private let providers: [ClientOverlayTarget: @Sendable () async -> ClientUsageSnapshot?]
+    private let providers: [ClientID: @Sendable () async -> ClientUsageSnapshot?]
     private var refreshing = false
     private var refreshPending = false
     private var timer: Timer?
 
-    init(providers: [ClientOverlayTarget: @Sendable () async -> ClientUsageSnapshot?]) {
+    init(providers: [ClientID: @Sendable () async -> ClientUsageSnapshot?]) {
         self.providers = providers
     }
 
@@ -72,7 +71,7 @@ final class ClientUsageStore: ObservableObject {
         repeat {
             refreshPending = false
             let providers = self.providers
-            await withTaskGroup(of: (ClientOverlayTarget, ClientUsageSnapshot?).self) { group in
+            await withTaskGroup(of: (ClientID, ClientUsageSnapshot?).self) { group in
                 for (target, provider) in providers {
                     group.addTask { (target, await provider()) }
                 }

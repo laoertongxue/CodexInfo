@@ -94,19 +94,6 @@ final class MenuBarController: NSObject {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// Opens the panel on the client of the clicked badge.
-    ///
-    /// The status item and the badge share the panel page; the selection is
-    /// sent to the page so the tab matches the badge that was clicked.
-    func showPanel(client: ClientOverlayTarget) {
-        guard let button = statusItem.button else { return }
-        if !popover.isShown {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        panel.selectClient(client.rawValue)
-    }
-
     /// Opens the panel or the menu, depending on the button that was clicked.
     @objc private func statusItemClicked() {
         if NSApp.currentEvent?.type == .rightMouseUp {

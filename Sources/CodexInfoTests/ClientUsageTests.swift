@@ -39,9 +39,7 @@ func registerClientUsageTests() {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         context.expectEqual(snapshot?.updatedAt, formatter.date(from: "2026-10-25T01:30:49.939Z"))
-        let badge = await provider.badge()
-        context.expectEqual(badge?.session, "会话 —")
-        context.expectEqual(badge?.quotaPercent, 50)
+        context.expectEqual(snapshot?.tone, .normal)
     }
 
     test("Qoder usage finds a summary beyond the first tail window") { context in
@@ -65,7 +63,8 @@ func registerClientUsageTests() {
         context.expectEqual(snapshot?.detail, "剩余 1174 / 2400 积分")
     }
 
-    test("Qoder usage falls back to the two quotas of an older summary") { context in        let root = temporaryDirectory()
+    test("Qoder usage falls back to the two quotas of an older summary") { context in
+        let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let run = root.appendingPathComponent("run", isDirectory: true)
         do {
@@ -77,16 +76,16 @@ func registerClientUsageTests() {
             context.fail("the log was not written: \(error)")
             return
         }
-        let badge = await QoderUsageProvider(logRoot: root).badge()
-        context.expectEqual(badge?.quotaPercent, 49)
+        let snapshot = await QoderUsageProvider(logRoot: root).snapshot()
+        context.expectEqual(snapshot?.quotaPercent, 49)
     }
 
     test("Qoder usage reports a missing log as no quota") { context in
         let root = temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let badge = await QoderUsageProvider(logRoot: root).badge()
-        context.expectEqual(badge?.quotaPercent, nil)
-        context.expectEqual(badge?.tone, .muted)
+        let snapshot = await QoderUsageProvider(logRoot: root).snapshot()
+        context.expectEqual(snapshot?.quotaPercent, nil)
+        context.expectEqual(snapshot?.tone, .muted)
     }
 
     test("DeepSeek usage sends the local grant and shows the balance") { context in
@@ -162,9 +161,9 @@ func registerClientUsageTests() {
             return
         }
         let client = MockHTTPClient(error: HTTPError.blockedURL)
-        let badge = await DeepSeekUsageProvider(credentialsURL: credentials, http: client).badge()
-        context.expectEqual(badge?.quotaText, nil)
-        context.expectEqual(badge?.tone, .muted)
+        let snapshot = await DeepSeekUsageProvider(credentialsURL: credentials, http: client).snapshot()
+        context.expectEqual(snapshot?.quotaText, nil)
+        context.expectEqual(snapshot?.tone, .muted)
         context.expectEqual(client.requestCount, 0)
     }
 
@@ -230,7 +229,6 @@ func registerClientUsageTests() {
         let snapshot = await provider.snapshot()
         context.expectEqual(snapshot?.quotaPercent, 93)
         context.expectEqual(snapshot?.detail, "5 小时窗口 100%")
-        context.expectEqual(snapshot?.badge.session, "会话 —")
         context.expectEqual(snapshot?.model, "MiniMax M3.1 Flash")
         context.expectEqual(snapshot?.effort, "思考")
         context.expectEqual(snapshot?.source, "官方额度接口")
@@ -327,9 +325,9 @@ func registerClientUsageTests() {
             http: client,
             now: { Date(timeIntervalSince1970: 1_790_000_000) }
         )
-        let badge = await provider.badge()
-        context.expectEqual(badge?.quotaPercent, nil)
-        context.expectEqual(badge?.tone, .muted)
+        let snapshot = await provider.snapshot()
+        context.expectEqual(snapshot?.quotaPercent, nil)
+        context.expectEqual(snapshot?.tone, .muted)
         context.expectEqual(client.requestCount, 0)
     }
 }

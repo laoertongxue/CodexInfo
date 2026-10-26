@@ -7,7 +7,6 @@ import type { Host } from "./types";
 export function useHost() {
   const [snapshot, setSnapshot] = useState<UsageSnapshot | null>(null);
   const [clients, setClients] = useState<ClientUsageSnapshot[]>([]);
-  const [selection, setSelection] = useState<{ client: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<Host["mode"]>("mock");
   const hostRef = useRef<Host | null>(null);
@@ -20,12 +19,11 @@ export function useHost() {
       .start({
         onSnapshot: setSnapshot,
         onClients: setClients,
-        onSelectClient: (client) => setSelection({ client }),
         onError: setError,
       })
       .catch((reason) => setError(String(reason)));
     return () => host.stop();
   }, []);
 
-  return { snapshot, clients, selection, error, mode, host: hostRef };
+  return { snapshot, clients, error, mode, host: hostRef };
 }

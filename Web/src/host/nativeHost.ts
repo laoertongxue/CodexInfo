@@ -32,7 +32,6 @@ export class NativeHost implements Host {
     window.CodexInfoHost = {
       render: (snapshot: UsageSnapshot) => handlers.onSnapshot(snapshot),
       renderClients: (clients: ClientUsageSnapshot[]) => handlers.onClients(clients),
-      selectClient: (client: string) => handlers.onSelectClient?.(client),
       error: (message: string) => handlers.onError(message),
     };
     // The app waits for this announcement before it pushes the first snapshot.

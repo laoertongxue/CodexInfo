@@ -29,7 +29,7 @@ func registerMCPTests() {
             return
         }
         context.expectEqual(info["name"] as? String, "codexinfo")
-        context.expectEqual(info["version"] as? String, "0.1.1")
+        context.expectEqual(info["version"] as? String, "0.1.2")
     }
 
     test("MCP initialize echoes a supported protocol version") { context in

@@ -11,7 +11,6 @@ interface Window {
   CodexInfoHost?: {
     render: (snapshot: import("./data/types").UsageSnapshot) => void;
     renderClients?: (clients: import("./data/types").ClientUsageSnapshot[]) => void;
-    selectClient?: (client: string) => void;
     error: (message: string) => void;
   };
 }

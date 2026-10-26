@@ -147,17 +147,4 @@ public struct ClientUsageSnapshot: Codable, Equatable, Sendable {
         self.resetCardTotal = resetCardTotal
         self.limits = limits
     }
-
-    /// The compact line of the overlay.
-    public var badge: ClientBadge {
-        ClientBadge(
-            model: model,
-            effort: effort,
-            quotaPercent: quotaPercent,
-            quotaText: quotaText,
-            quotaLabel: quotaLabel,
-            session: "会话 —",
-            tone: tone
-        )
-    }
 }

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/laoertongxue/CodexInfo/actions/workflows/ci.yml/badge.svg)](https://github.com/laoertongxue/CodexInfo/actions/workflows/ci.yml)
 
-一个 macOS 菜单栏 App，把 **Codex、Qoder、MiniMax Code、DeepSeek Harness** 的额度、重置卡与输出速率放到一个面板里；并在每个客户端的输入区显示一个只读额度贴片。
+一个 macOS 菜单栏 App，把 **Codex、Qoder、MiniMax Code、DeepSeek Harness** 的额度、重置卡与输出速率放到一个面板里。四个客户端用顶部标签切换。
 
 不用切窗口找额度，也不用猜下一次重置是什么时候。
 
@@ -15,7 +15,6 @@
 - **四个客户端来回切**：菜单栏面板顶部直接切换 Codex / Qoder / MiniMax / DeepSeek，每个标签显示该客户端自己的额度口径。
 - **重置发生却不知道**：面板先显示你自己的周额度上次/下次重置（北京时间），重置后 1 小时内标「刚刚重置」；社区的单来源记录和最新预告也会直接出现，不再藏在折叠区。
 - **重置前没有提醒**：在「设置 → 通知」开启后，周额度重置前 15 分钟发一次系统通知。
-- **输入区看不到额度**：贴片显示当前客户端的额度，点击打开对应面板；贴片是独立浮窗，不修改客户端、不注入 DOM。
 - **社区消息不等于个人额度**：本机重置时间来自官方接口，社区公告单独展示并标注来源与发布时间。
 
 ## 你会看到
@@ -27,7 +26,7 @@
 
 ## 下载与安装
 
-1. 打开 [Releases](https://github.com/laoertongxue/CodexInfo/releases/latest)，下载 `CodexInfo-0.1.1-macos-arm64.zip` 和 `SHA256SUMS.txt`。
+1. 打开 [Releases](https://github.com/laoertongxue/CodexInfo/releases/latest)，下载 `CodexInfo-0.1.2-macos-arm64.zip` 和 `SHA256SUMS.txt`。
 2. 解压，把 `CodexInfo.app` 拖到「应用程序」。
 3. 首次打开请在 Finder 中右键 →「打开」。应用使用 ad-hoc 签名、未做 Apple 公证。
 4. 如果仍被 Gatekeeper 拦截：
@@ -37,7 +36,7 @@
    open /Applications/CodexInfo.app
    ```
 
-5. 菜单栏出现用量文字后，左键打开面板；在「设置」中开启「客户端贴片」，并按提示授予辅助功能权限。
+5. 菜单栏出现用量文字后，左键打开面板。
 
 ### Codex 插件（可选）
 
@@ -56,7 +55,6 @@ bash scripts/install-plugin.sh
 - **左键**菜单栏图标：打开 / 关闭面板。
 - **右键**菜单栏图标：刷新、扫描重置源、设置、开机启动、退出。
 - **面板标签**：Codex / Qoder / MiniMax / DeepSeek；切换后高度随内容收缩。
-- **贴片**：只在对应客户端位于前台时显示；点击打开面板并选中该客户端。
 - **重置追踪**：额度与重置源均每 60 秒刷新；本机周额度按北京时间展示；社区记录即使只有一个来源也会显示。
 - **重置卡**：只展示张数、类型、到期时间与倒计时，不提供使用或购买操作。
 
@@ -65,7 +63,7 @@ bash scripts/install-plugin.sh
 - 访问令牌只在内存中，只发往各自官方域（`chatgpt.com`、`platform.deepseek.com`、`www.minimaxi.com`）；不写日志、不落缓存、不写快照。
 - 每个带令牌的 HTTP client 只允许自己的 host 集合，跨源重定向会被拒绝。
 - Qoder 的凭证是加密的 Chromium 存储，**不读取**；只读它自己打印的用量日志。
-- 不读取对话正文；辅助功能只读控件角色、标签与 frame，用于贴片对齐。
+- 不读取对话正文。
 - 重置卡只读展示，不自动使用、不自动购买。
 
 ## 系统要求
@@ -91,7 +89,6 @@ open dist/CodexInfo.app
 
 - Release 为 arm64 + ad-hoc 签名、未公证；首次打开需右键。
 - Qoder 额度随它自己的用量日志刷新而更新，本项目不主动请求 Qoder 后端。
-- 客户端 UI 更新可能改变辅助功能树；贴片定位依赖 AX 锚点，必要时需要重新校准。
 - 面板里的额度与重置卡来自各客户端自己的账号；本项目不提供账号、额度或充值。
 
 ## 反馈

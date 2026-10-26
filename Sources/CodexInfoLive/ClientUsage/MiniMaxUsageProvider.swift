@@ -126,11 +126,6 @@ public struct MiniMaxUsageProvider: Sendable {
         }
     }
 
-    /// The overlay badge of the coding plan.
-    public func badge() async -> ClientBadge? {
-        await snapshot()?.badge
-    }
-
     private func unavailable(settings: MiniMaxSettings, at moment: Date) -> ClientUsageSnapshot {
         ClientUsageSnapshot(
             client: "miniMaxCode",

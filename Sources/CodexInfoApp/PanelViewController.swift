@@ -67,13 +67,6 @@ final class PanelViewController: NSViewController, WKScriptMessageHandler, WKNav
         measureContent()
     }
 
-    /// Selects the panel tab of a client.
-    func selectClient(_ client: String) {
-        let json = Self.jsonString(client)
-        webView.evaluateJavaScript("window.CodexInfoHost && window.CodexInfoHost.selectClient && window.CodexInfoHost.selectClient(\(json));")
-        measureContent()
-    }
-
     /// Reports the height of the content, so the popover is exactly as tall as
     /// the panel and never leaves empty space below it.
     func measureContent() {

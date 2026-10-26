@@ -80,11 +80,6 @@ public struct DeepSeekUsageProvider: Sendable {
         }
     }
 
-    /// The overlay badge of the wallet.
-    public func badge() async -> ClientBadge? {
-        await snapshot()?.badge
-    }
-
     private func unavailable(settings: DeepSeekSettings) -> ClientUsageSnapshot {
         ClientUsageSnapshot(
             client: "deepSeekHarness",

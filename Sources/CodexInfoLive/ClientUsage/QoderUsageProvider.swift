@@ -57,11 +57,6 @@ public struct QoderUsageProvider: Sendable {
             limits: reading.limits
         )
     }
-
-    /// The overlay badge of the last account usage line.
-    public func badge() async -> ClientBadge? {
-        await snapshot()?.badge
-    }
 }
 
 /// One credits window of a Qoder account usage line.

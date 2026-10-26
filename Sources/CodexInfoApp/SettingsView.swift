@@ -91,29 +91,6 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("客户端贴片") {
-                Toggle("在客户端输入区显示额度", isOn: Binding(
-                    get: { store.settings.overlayEnabled },
-                    set: { enabled in store.update { $0.overlayEnabled = enabled } }
-                ))
-                HStack {
-                    Text(AccessibilityPermission.isTrusted ? "精确对齐已授权" : "精确对齐未授权")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("授权…") {
-                        AccessibilityPermission.request()
-                    }
-                    .disabled(AccessibilityPermission.isTrusted)
-                }
-                Text("授权后按原生模型选择器定位贴片；未授权时 Codex / DeepSeek 按窗口估算，Qoder / MiniMax 贴片隐藏。授权后请重启 CodexInfo。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text("覆盖 ChatGPT、Qoder、DeepSeek Harness 与 MiniMax Code；仅在对应窗口位于前台时显示，单击贴片打开面板里该客户端的标签。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
             Section("通知") {
                 Toggle("启用系统通知", isOn: Binding(
                     get: { store.settings.notificationsEnabled },

@@ -360,7 +360,7 @@ function ClientPanel({
 }
 
 export default function App() {
-  const { snapshot, clients, selection, error, mode, host } = useHost();
+  const { snapshot, clients, error, mode, host } = useHost();
   const [now, setNow] = useState(Date.now());
   const [selected, setSelected] = useState<string>("codex");
 
@@ -368,12 +368,6 @@ export default function App() {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (selection && CLIENT_TABS.some((tab) => tab.client === selection.client)) {
-      setSelected(selection.client);
-    }
-  }, [selection]);
 
   if (error) return <main data-testid="panel" className="panel error">加载失败：{error}</main>;
   if (!snapshot) return <main data-testid="panel" className="panel loading">加载中…</main>;

@@ -149,10 +149,6 @@ test("the native host switches between the client panels", async ({ page }) => {
 
   await page.getByRole("tab", { name: "Codex" }).click();
   await expect(page.getByTestId("weekly-quota")).toContainText("84%");
-
-  // A click on the overlay badge asks the native app to select the tab.
-  await page.evaluate(() => window.CodexInfoHost?.selectClient?.("qoder"));
-  await expect(page.getByTestId("client-limit-plan-value")).toContainText("826 / 2,000");
 });
 
 test("the native host reports the panel height after a tab switch", async ({ page }) => {
