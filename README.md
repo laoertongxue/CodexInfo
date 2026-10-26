@@ -27,7 +27,7 @@
 
 ## 下载与安装
 
-1. 打开 [Releases](https://github.com/laoertongxue/CodexInfo/releases/latest)，下载 `CodexInfo-0.1.5-macos-arm64.zip` 和 `SHA256SUMS.txt`。
+1. 打开 [Releases](https://github.com/laoertongxue/CodexInfo/releases/latest)，下载 `CodexInfo-0.1.6-macos-arm64.zip` 和 `SHA256SUMS.txt`。
 2. 解压，把 `CodexInfo.app` 拖到「应用程序」。
 3. 首次打开请在 Finder 中右键 →「打开」。应用使用 ad-hoc 签名、未做 Apple 公证。
 4. 如果仍被 Gatekeeper 拦截：
