@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/laoertongxue/CodexInfo/actions/workflows/ci.yml/badge.svg)](https://github.com/laoertongxue/CodexInfo/actions/workflows/ci.yml)
 
-一个 macOS 菜单栏 App，把 **Codex、Qoder、MiniMax Code、DeepSeek Harness** 的额度、重置卡与输出速率放到一个面板里。四个客户端用顶部标签切换。
+一个 macOS 菜单栏 App，把 **Codex、Qoder、MiniMax Code、OpenCode、DeepSeek Harness** 的额度、重置卡与输出速率放到一个面板里。五个客户端用顶部标签切换。
 
 不用切窗口找额度，也不用猜下一次重置是什么时候。
 
@@ -12,7 +12,7 @@
 
 ## 解决什么问题
 
-- **四个客户端来回切**：菜单栏面板顶部直接切换 Codex / Qoder / MiniMax / DeepSeek，每个标签显示该客户端自己的额度口径。
+- **五个客户端来回切**：菜单栏面板顶部直接切换 Codex / Qoder / MiniMax / OpenCode / DeepSeek，每个标签显示该客户端自己的额度口径。
 - **重置发生却不知道**：面板先显示你自己的周额度上次/下次重置（北京时间），重置后 1 小时内标「刚刚重置」；社区的单来源记录和最新预告也会直接出现，不再藏在折叠区。
 - **重置前没有提醒**：在「设置 → 通知」开启后，周额度重置前 15 分钟发一次系统通知。
 - **社区消息不等于个人额度**：本机重置时间来自官方接口，社区公告单独展示并标注来源与发布时间。
@@ -22,11 +22,12 @@
 - **Codex**：周额度、重置卡、四源重置追踪、tok/s、账号 Token、本地模型状态。
 - **Qoder**：套餐内 Credits 与资源包分段、已用/总数、已使用 %、剩余点数、套餐刷新时间。
 - **MiniMax**：5 小时限额与周限额、两个重置时间与倒计时、可用重置卡（只读）。
+- **OpenCode**：Go 的 5 小时/周/月额度、Zen 余额、免费模型列表；Go Key 过期时会提示重新生成。
 - **DeepSeek**：官方钱包余额、模型与档位。
 
 ## 下载与安装
 
-1. 打开 [Releases](https://github.com/laoertongxue/CodexInfo/releases/latest)，下载 `CodexInfo-0.1.2-macos-arm64.zip` 和 `SHA256SUMS.txt`。
+1. 打开 [Releases](https://github.com/laoertongxue/CodexInfo/releases/latest)，下载 `CodexInfo-0.1.4-macos-arm64.zip` 和 `SHA256SUMS.txt`。
 2. 解压，把 `CodexInfo.app` 拖到「应用程序」。
 3. 首次打开请在 Finder 中右键 →「打开」。应用使用 ad-hoc 签名、未做 Apple 公证。
 4. 如果仍被 Gatekeeper 拦截：
@@ -54,7 +55,7 @@ bash scripts/install-plugin.sh
 
 - **左键**菜单栏图标：打开 / 关闭面板。
 - **右键**菜单栏图标：刷新、扫描重置源、设置、开机启动、退出。
-- **面板标签**：Codex / Qoder / MiniMax / DeepSeek；切换后高度随内容收缩。
+- **面板标签**：Codex / Qoder / MiniMax / OpenCode / DeepSeek；切换后高度随内容收缩。
 - **重置追踪**：额度与重置源均每 60 秒刷新；本机周额度按北京时间展示；社区记录即使只有一个来源也会显示。
 - **重置卡**：只展示张数、类型、到期时间与倒计时，不提供使用或购买操作。
 

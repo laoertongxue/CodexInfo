@@ -21,6 +21,24 @@ export interface ClientQuotaLimit {
   resetLabel?: string | null;
 }
 
+/** One OpenCode Go usage window. */
+export interface OpenCodeWindow {
+  id: string;
+  label: string;
+  usedPercent: number;
+  resetAt?: string | null;
+}
+
+/** The OpenCode Go, Zen and free-model state. */
+export interface OpenCodeUsage {
+  goWindows?: OpenCodeWindow[] | null;
+  goState: "active" | "expired" | "unavailable";
+  goNote?: string | null;
+  zenBalance?: string | null;
+  zenState: "signedIn" | "signedOut" | "unavailable";
+  freeModels?: string[] | null;
+}
+
 /** One usage-reset card of a client. */
 export interface ClientResetCard {
   id: string;
@@ -50,6 +68,7 @@ export interface ClientUsageSnapshot {
   resetCards?: ClientResetCard[] | null;
   resetCardTotal?: number | null;
   limits?: ClientQuotaLimit[] | null;
+  openCode?: OpenCodeUsage | null;
 }
 
 /** The areas that carry their own freshness state. */

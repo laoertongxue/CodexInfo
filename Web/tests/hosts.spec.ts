@@ -46,6 +46,32 @@ const mockClients: ClientUsageSnapshot[] = [
     ],
   },
   {
+    client: "openCode",
+    name: "OpenCode",
+    quotaPercent: 97,
+    quotaLabel: "Go 额度",
+    source: "OpenCode Go / Zen",
+    updatedAt: "2026-10-25T03:38:00.000Z",
+    tone: "normal",
+    openCode: {
+      goState: "active",
+      goWindows: [
+        { id: "rolling", label: "5 小时", usedPercent: 3, resetAt: "2026-10-26T08:00:00.000Z" },
+        { id: "weekly", label: "周", usedPercent: 2, resetAt: "2026-10-31T00:00:00.000Z" },
+        { id: "monthly", label: "月", usedPercent: 1, resetAt: "2026-11-01T00:00:00.000Z" },
+      ],
+      zenBalance: "$8.29",
+      zenState: "signedIn",
+      freeModels: [
+        "opencode/glm-5.3-flash-free",
+        "opencode/deepseek-v4.1-flash-free",
+        "opencode/mimo-v2.6-flash-free",
+        "opencode/nemotron-3-ultra-free",
+        "opencode/space-bunny-free",
+      ],
+    },
+  },
+  {
     client: "deepSeekHarness",
     name: "DeepSeek",
     quotaText: "¥41.60",
@@ -142,6 +168,15 @@ test("the native host switches between the client panels", async ({ page }) => {
   await expect(page.getByTestId("client-model")).toContainText("MiniMax M3.1 Flash · 思考");
   await expect(page.getByTestId("client-reset-card-count")).toContainText("3 张");
   await expect(page.getByTestId("panel")).toContainText("完全重置");
+
+  await page.getByRole("tab", { name: "OpenCode" }).click();
+  await expect(page.getByTestId("opencode-go-state")).toHaveText("可用");
+  await expect(page.getByTestId("opencode-window-rolling")).toContainText("已用 3%");
+  await expect(page.getByTestId("opencode-window-weekly")).toContainText("已用 2%");
+  await expect(page.getByTestId("opencode-window-monthly")).toContainText("已用 1%");
+  await expect(page.getByTestId("opencode-zen-balance")).toHaveText("$8.29");
+  await expect(page.getByTestId("opencode-free-count")).toHaveText("5 个");
+  await expect(page.getByTestId("panel")).toContainText("glm-5.3-flash-free");
 
   await page.getByRole("tab", { name: "DeepSeek" }).click();
   await expect(page.getByTestId("client-quota")).toContainText("¥41.60");

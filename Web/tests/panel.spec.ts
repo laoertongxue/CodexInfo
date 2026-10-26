@@ -98,18 +98,17 @@ test("a reset from a single source is surfaced instead of hidden", async ({ page
   await expect(radar).not.toContainText("来源已确认");
 });
 
-test("a forecast is shown with its source and Beijing time", async ({ page }) => {
+test("a forecast is shown with its source and publish time", async ({ page }) => {
   await page.goto("/");
   const forecast = page.getByTestId("reset-forecast");
   await expect(forecast).toContainText("By midnight PST");
   await expect(forecast).toContainText("Codex Resets");
-  await expect(forecast).toContainText("北京时间");
+  await expect(forecast).toContainText("发布");
 });
 
 test("a weekly reset five minutes ago is marked as just reset", async ({ page }) => {
   await page.goto("/?fixture=just-reset");
   await expect(page.getByTestId("just-reset")).toHaveText("刚刚重置");
-  await expect(page.getByTestId("quota-reset-window")).toContainText("本机周额度刚刚重置");
 });
 
 test("a normal verdict keeps the evidence collapsed but shows the disclaimer", async ({ page }) => {

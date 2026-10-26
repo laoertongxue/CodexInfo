@@ -5,4 +5,5 @@ enum ClientID: String, CaseIterable, Hashable, Sendable {
     case qoder
     case deepSeekHarness
     case miniMaxCode
+    case openCode
 }

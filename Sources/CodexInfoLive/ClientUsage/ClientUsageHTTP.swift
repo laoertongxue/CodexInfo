@@ -16,4 +16,14 @@ public enum ClientUsageHTTP {
     public static func miniMax() -> URLSessionHTTPClient {
         URLSessionHTTPClient(hosts: SourceHosts.miniMax)
     }
+
+    /// The client of the OpenCode Go request; only the Go origin.
+    public static func openCodeGo() -> URLSessionHTTPClient {
+        URLSessionHTTPClient(hosts: SourceHosts.openCode)
+    }
+
+    /// The client of the OpenCode Zen console; only the console origin.
+    public static func openCodeZen() -> URLSessionHTTPClient {
+        URLSessionHTTPClient(hosts: SourceHosts.openCodeConsole)
+    }
 }

@@ -330,6 +330,154 @@ func registerClientUsageTests() {
         context.expectEqual(snapshot?.tone, .muted)
         context.expectEqual(client.requestCount, 0)
     }
+
+    test("OpenCode usage reads Go windows, free models and unavailable Zen") { context in
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let auth = directory.appendingPathComponent("auth.json")
+        let zen = directory.appendingPathComponent("zen.json")
+        do {
+            let authJSON = #"{"opencode-go":{"type":"api","key":"tok_test_opencode"}}"#
+            try authJSON.write(to: auth, atomically: true, encoding: .utf8)
+        } catch {
+            context.fail("the auth file was not written: \(error)")
+            return
+        }
+        let goJSON = #"{"usage":{"rolling":{"status":"ok","percent":3,"resetsAt":"2026-10-26T08:00:00Z"},"weekly":{"status":"ok","percent":2,"resetsAt":"2026-10-31T00:00:00Z"},"monthly":{"status":"ok","percent":1,"resetsAt":"2026-11-01T00:00:00Z"}}}"#
+        let go = PathHTTPClient(responses: [
+            ("zen/go/v1/usage", HTTPResponse(data: Data(goJSON.utf8), statusCode: 200)),
+        ])
+        let zenHTTP = MockHTTPClient(error: HTTPError.blockedURL)
+        let provider = OpenCodeUsageProvider(
+            authURL: auth,
+            zenTokenURL: zen,
+            goHTTP: go,
+            zenHTTP: zenHTTP,
+            now: { Date(timeIntervalSince1970: 1_790_000_000) },
+            freeModels: {
+                ["opencode/glm-5.3-flash-free", "opencode-go/space-bunny-free"]
+            }
+        )
+        let snapshot = await provider.snapshot()
+        context.expectEqual(snapshot?.quotaPercent, 97)
+        context.expectEqual(snapshot?.quotaLabel, "Go 额度")
+        context.expectEqual(snapshot?.openCode?.goState, "active")
+        context.expectEqual(snapshot?.openCode?.goWindows?.count, 3)
+        context.expectEqual(snapshot?.openCode?.goWindows?.first?.label, "5 小时")
+        context.expectEqual(snapshot?.openCode?.goWindows?.first?.usedPercent, 3)
+        context.expectEqual(
+            snapshot?.openCode?.goWindows?.first?.resetAt,
+            DateParsing.iso8601("2026-10-26T08:00:00Z")
+        )
+        context.expectEqual(snapshot?.openCode?.zenState, "signedOut")
+        context.expectEqual(
+            snapshot?.openCode?.freeModels,
+            ["opencode/glm-5.3-flash-free", "opencode-go/space-bunny-free"]
+        )
+        let request = go.requests.first
+        context.expectEqual(request?.url?.host, "opencode.ai")
+        context.expectEqual(request?.timeoutInterval, AppConstants.clientUsageTimeoutSeconds)
+        context.expectEqual(
+            request?.value(forHTTPHeaderField: "Authorization"),
+            "Bearer tok_test_opencode"
+        )
+        context.expectEqual(zenHTTP.requestCount, 0)
+    }
+
+    test("OpenCode usage reports an expired Go key") { context in
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let auth = directory.appendingPathComponent("auth.json")
+        do {
+            let authJSON = #"{"opencode-go":{"type":"api","key":"tok_test_opencode"}}"#
+            try authJSON.write(to: auth, atomically: true, encoding: .utf8)
+        } catch {
+            context.fail("the auth file was not written: \(error)")
+            return
+        }
+        let expired = #"{"error":{"type":"authentication_error","code":"api_key_expired","message":"expired"}}"#
+        let go = PathHTTPClient(responses: [
+            ("zen/go/v1/usage", HTTPResponse(data: Data(expired.utf8), statusCode: 401)),
+        ])
+        let provider = OpenCodeUsageProvider(
+            authURL: auth,
+            zenTokenURL: directory.appendingPathComponent("missing-zen.json"),
+            goHTTP: go,
+            zenHTTP: MockHTTPClient(error: HTTPError.blockedURL),
+            now: { Date(timeIntervalSince1970: 1_790_000_000) },
+            freeModels: { ["opencode/space-bunny-free"] }
+        )
+        let snapshot = await provider.snapshot()
+        context.expectEqual(snapshot?.openCode?.goState, "expired")
+        context.expectTrue(snapshot?.openCode?.goNote?.contains("过期") == true)
+        context.expectEqual(snapshot?.openCode?.goWindows, nil)
+        context.expectEqual(snapshot?.quotaPercent, nil)
+        context.expectEqual(snapshot?.tone, .muted)
+        context.expectEqual(snapshot?.openCode?.freeModels, ["opencode/space-bunny-free"])
+    }
+
+    test("OpenCode usage reads the Zen balance with a console token") { context in
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let auth = directory.appendingPathComponent("auth.json")
+        let zen = directory.appendingPathComponent("zen.json")
+        do {
+            let authJSON = #"{"opencode-go":{"type":"api","key":"tok_test_opencode"}}"#
+            try authJSON.write(to: auth, atomically: true, encoding: .utf8)
+            let zenJSON = #"{"accessToken":"zen_test","refreshToken":"","expires":9999999999999}"#
+            try zenJSON.write(to: zen, atomically: true, encoding: .utf8)
+        } catch {
+            context.fail("the auth files were not written: \(error)")
+            return
+        }
+        let goJSON = #"{"usage":{"rolling":{"percent":3},"weekly":{"percent":2},"monthly":{"percent":1}}}"#
+        let go = PathHTTPClient(responses: [
+            ("zen/go/v1/usage", HTTPResponse(data: Data(goJSON.utf8), statusCode: 200)),
+        ])
+        let billing = #"{"availableMicroCents":829000000}"#
+        let zenHTTP = PathHTTPClient(responses: [
+            ("billing/status", HTTPResponse(data: Data(billing.utf8), statusCode: 200)),
+        ])
+        let provider = OpenCodeUsageProvider(
+            authURL: auth,
+            zenTokenURL: zen,
+            goHTTP: go,
+            zenHTTP: zenHTTP,
+            now: { Date(timeIntervalSince1970: 1_790_000_000) },
+            freeModels: { [] }
+        )
+        let snapshot = await provider.snapshot()
+        context.expectEqual(snapshot?.openCode?.zenState, "signedIn")
+        context.expectEqual(snapshot?.openCode?.zenBalance, "$8.29")
+        context.expectEqual(zenHTTP.requests.first?.url?.host, "console.opencode.ai")
+        context.expectEqual(
+            zenHTTP.requests.first?.value(forHTTPHeaderField: "Authorization"),
+            "Bearer zen_test"
+        )
+        context.expectEqual(zenHTTP.requests.first?.url?.path, "/api/billing/status")
+        context.expectEqual(go.requests.first?.url?.host, "opencode.ai")
+    }
+
+    test("OpenCode usage reports a missing Go key without a request") { context in
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let go = MockHTTPClient(error: HTTPError.blockedURL)
+        let provider = OpenCodeUsageProvider(
+            authURL: directory.appendingPathComponent("missing-auth.json"),
+            zenTokenURL: directory.appendingPathComponent("missing-zen.json"),
+            goHTTP: go,
+            zenHTTP: MockHTTPClient(error: HTTPError.blockedURL),
+            now: { Date(timeIntervalSince1970: 1_790_000_000) },
+            freeModels: { ["opencode/space-bunny-free"] }
+        )
+        let snapshot = await provider.snapshot()
+        context.expectEqual(snapshot?.openCode?.goState, "unavailable")
+        context.expectEqual(snapshot?.openCode?.goNote, "未登录 OpenCode Go")
+        context.expectEqual(snapshot?.openCode?.zenState, "signedOut")
+        context.expectEqual(snapshot?.openCode?.freeModels, ["opencode/space-bunny-free"])
+        context.expectEqual(go.requestCount, 0)
+    }
+
 }
 
 /// A client that answers by URL path and records every request.

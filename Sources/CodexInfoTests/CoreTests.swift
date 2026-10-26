@@ -2670,6 +2670,8 @@ func registerCoreTests() {
         let radar = URL(string: "https://codexradar.com/current.json")!
         let deepSeek = URL(string: "https://platform.deepseek.com/api/v0/users/get_user_summary")!
         let miniMax = URL(string: "https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains")!
+        let openCode = URL(string: "https://opencode.ai/zen/go/v1/usage")!
+        let openCodeConsole = URL(string: "https://console.opencode.ai/api/billing/status")!
 
         context.expectEqual(NetworkAllowList.allows(chatgpt, hosts: SourceHosts.official), true)
         context.expectEqual(NetworkAllowList.allows(radar, hosts: SourceHosts.official), false)
@@ -2686,6 +2688,14 @@ func registerCoreTests() {
 
         context.expectEqual(NetworkAllowList.allows(miniMax, hosts: SourceHosts.miniMax), true)
         context.expectEqual(NetworkAllowList.allows(deepSeek, hosts: SourceHosts.miniMax), false)
+
+        context.expectEqual(NetworkAllowList.allows(openCode, hosts: SourceHosts.openCode), true)
+        // The allow-list permits subdomains of a vendor; both OpenCode hosts
+        // belong to the same vendor, but the two clients still carry separate keys.
+        context.expectEqual(NetworkAllowList.allows(openCodeConsole, hosts: SourceHosts.openCode), true)
+        context.expectEqual(NetworkAllowList.allows(openCodeConsole, hosts: SourceHosts.openCodeConsole), true)
+        context.expectEqual(NetworkAllowList.allows(openCode, hosts: SourceHosts.openCodeConsole), false)
+        context.expectEqual(NetworkAllowList.allows(chatgpt, hosts: SourceHosts.openCode), false)
     }
 
     test("RefreshGate queues one rerun and never overlaps work") { context in

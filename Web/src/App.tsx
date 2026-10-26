@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode, type RefObject } from "react";
 import { DASH, formatBeijingDateTime, formatDateTime, formatRate, formatRemaining, formatTokens } from "./format";
 import { useHost } from "./host/useHost";
-import type { ClientUsageSnapshot, DataState, HealthStatus, ResetSignal, SourceState, UsageSnapshot } from "./data/types";
+import type { ClientUsageSnapshot, DataState, HealthStatus, OpenCodeUsage, ResetSignal, SourceState, UsageSnapshot } from "./data/types";
 import type { Host } from "./host/types";
 
 /** The four local verdicts of the model health. */
@@ -114,6 +114,7 @@ const CLIENT_TABS = [
   { client: "codex", name: "Codex" },
   { client: "qoder", name: "Qoder" },
   { client: "miniMaxCode", name: "MiniMax" },
+  { client: "openCode", name: "OpenCode" },
   { client: "deepSeekHarness", name: "DeepSeek" },
 ] as const;
 
@@ -180,6 +181,78 @@ function ClientTabs({
   );
 }
 
+/** The OpenCode Go windows, Zen balance and free models. */
+function OpenCodeSections({ usage, now }: { usage: OpenCodeUsage; now: number }) {
+  const goWindows = usage.goWindows ?? [];
+  const goLabel =
+    usage.goState === "active" ? "可用" : usage.goState === "expired" ? "Key 过期" : "未登录";
+  return (
+    <>
+      <Section id="opencode-go">
+        <div className="row">
+          <strong>OpenCode Go</strong>
+          <span className={`tag ${usage.goState === "active" ? "green" : "orange"}`} data-testid="opencode-go-state">
+            {goLabel}
+          </span>
+        </div>
+        {goWindows.map((window) => {
+          const tone =
+            window.usedPercent >= 90
+              ? "quota-critical"
+              : window.usedPercent >= 70
+                ? "quota-low"
+                : "";
+          return (
+            <div key={window.id} data-testid={`opencode-window-${window.id}`}>
+              <div className="row tiny">
+                <span>{window.label}</span>
+                <span className={tone}>已用 {window.usedPercent}%</span>
+              </div>
+              <div className="bar">
+                <i style={{ width: `${Math.min(100, window.usedPercent)}%` }} />
+              </div>
+              <div className="row tiny muted">
+                <span />
+                <span>
+                  {window.resetAt
+                    ? `${formatDateTime(window.resetAt)} 重置 · ${formatRemaining(window.resetAt, now)}`
+                    : DASH}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+        {usage.goNote ? <div className="tiny muted">{usage.goNote}</div> : null}
+      </Section>
+
+      <Section id="opencode-zen">
+        <div className="row">
+          <strong>Zen 余额</strong>
+          <strong data-testid="opencode-zen-balance">
+            {usage.zenBalance ?? (usage.zenState === "signedOut" ? "未登录" : "不可用")}
+          </strong>
+        </div>
+      </Section>
+
+      {usage.freeModels && usage.freeModels.length > 0 ? (
+        <Section id="opencode-free">
+          <div className="row">
+            <strong>免费模型</strong>
+            <span data-testid="opencode-free-count">{usage.freeModels.length} 个</span>
+          </div>
+          <div className="tiny muted">
+            {usage.freeModels
+              .slice(0, 4)
+              .map((model) => model.split("/").pop())
+              .join("、")}
+            {usage.freeModels.length > 4 ? ` 等 ${usage.freeModels.length} 个` : ""}
+          </div>
+        </Section>
+      ) : null}
+    </>
+  );
+}
+
 /** The compact panel of a client that is not Codex. */
 function ClientPanel({
   client,
@@ -212,7 +285,9 @@ function ClientPanel({
       <div className="body">
         {client ? (
           <>
-            {limits.length > 0 ? (
+            {client.openCode ? (
+              <OpenCodeSections usage={client.openCode} now={now} />
+            ) : limits.length > 0 ? (
               limits.map((limit) => {
                 const usedRatio =
                   limit.usedPercent != null
@@ -315,7 +390,7 @@ function ClientPanel({
                     </div>
                   ))
                 )}
-                <div className="tiny muted">来自 MiniMax 签到奖励；本面板只展示，不使用。</div>
+                <div className="tiny muted">签到奖励，只读。</div>
               </Section>
             )}
 
@@ -651,12 +726,12 @@ function CodexPanel({
               <div className="tiny muted">周额度重置时间未提供</div>
             )}
             {justReset ? (
-              <div className="tiny muted">本机周额度刚刚重置；社区公告可能滞后。</div>
+              <div className="tiny muted">本机周额度刚刚重置。</div>
             ) : null}
           </div>
 
           <div className="row tiny">
-            <span className="muted">额度每 60 秒刷新 · 重置源每 60 秒扫描</span>
+            <span className="muted">60 秒刷新</span>
             <span data-testid="source-availability">
               {sourcesUsable ? `${sourcesAvailable}/${radar.sources.length} 来源可用` : DASH}
             </span>
@@ -745,8 +820,8 @@ function CodexPanel({
                 <span className="tag">预告</span>
               </div>
               <div className="tiny muted">
-                信号发布 {formatBeijingDateTime(latestForecast.publishedAt)}（北京时间） ·{" "}
-                {latestForecast.sourceName} · 单一来源；预计时间见原文
+                {formatBeijingDateTime(latestForecast.publishedAt)} 发布 ·{" "}
+                {latestForecast.sourceName} · 单一来源
               </div>
               {latestForecast.summary && latestForecast.summary !== latestForecast.title ? (
                 <div className="tiny muted">{latestForecast.summary}</div>
@@ -769,7 +844,7 @@ function CodexPanel({
             aria-controls="radar-sources"
             onClick={() => setSourcesOpen((value) => !value)}
           >
-            {sourcesOpen ? "收起" : "来源健康与近期记录"}
+            {sourcesOpen ? "收起" : "来源健康"}
           </button>
           {sourcesOpen && (
             <div className="sources" id="radar-sources" data-testid="radar-sources">
@@ -790,12 +865,6 @@ function CodexPanel({
               ))}
             </div>
           )}
-          <div className="tiny muted">
-            社区公告是外部信息，不等于本机额度恢复；本机重置时间来自官方接口。
-          </div>
-          <div className="tiny muted">
-            可在设置 → 通知里开启重置前 15 分钟提醒；无明确时间的社区消息不推算倒计时。
-          </div>
         </Section>
 
         <Section id="model-health">

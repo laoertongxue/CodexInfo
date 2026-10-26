@@ -26,16 +26,21 @@ final class ClientUsageStore: ObservableObject {
         let qoder = QoderUsageProvider()
         let deepSeek = DeepSeekUsageProvider(http: ClientUsageHTTP.deepSeek())
         let miniMax = MiniMaxUsageProvider(http: ClientUsageHTTP.miniMax())
+        let openCode = OpenCodeUsageProvider(
+            goHTTP: ClientUsageHTTP.openCodeGo(),
+            zenHTTP: ClientUsageHTTP.openCodeZen()
+        )
         return ClientUsageStore(providers: [
             .qoder: { await qoder.snapshot() },
             .deepSeekHarness: { await deepSeek.snapshot() },
             .miniMaxCode: { await miniMax.snapshot() },
+            .openCode: { await openCode.snapshot() },
         ])
     }
 
     /// The snapshots in the order of the panel tabs.
     var ordered: [ClientUsageSnapshot] {
-        [.qoder, .miniMaxCode, .deepSeekHarness].compactMap { snapshots[$0] }
+        [.qoder, .miniMaxCode, .openCode, .deepSeekHarness].compactMap { snapshots[$0] }
     }
 
     /// Reads every client once at launch and then every 30 seconds.

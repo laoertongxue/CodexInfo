@@ -19,4 +19,8 @@ public enum SourceHosts {
     public static let deepSeek: Set<String> = ["platform.deepseek.com"]
     /// The MiniMax open platform, the issuer of the OAuth token.
     public static let miniMax: Set<String> = ["www.minimaxi.com"]
+    /// The OpenCode Go usage endpoint, the receiver of the Go API key.
+    public static let openCode: Set<String> = ["opencode.ai"]
+    /// The OpenCode Zen console, the receiver of the console token.
+    public static let openCodeConsole: Set<String> = ["console.opencode.ai"]
 }

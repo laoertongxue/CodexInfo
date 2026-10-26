@@ -65,6 +65,57 @@ public struct ClientResetCard: Codable, Equatable, Sendable, Identifiable {
     }
 }
 
+/// One OpenCode Go usage window.
+public struct OpenCodeWindow: Codable, Equatable, Sendable, Identifiable {
+    /// `rolling`, `weekly` or `monthly`.
+    public var id: String
+    /// The label of the window, e.g. `5 小时`.
+    public var label: String
+    /// The used share of the window, from 0 to 100.
+    public var usedPercent: Int
+    /// The next reset of the window.
+    public var resetAt: Date?
+
+    public init(id: String, label: String, usedPercent: Int, resetAt: Date? = nil) {
+        self.id = id
+        self.label = label
+        self.usedPercent = usedPercent
+        self.resetAt = resetAt
+    }
+}
+
+/// The OpenCode Go subscription, Zen balance and free model state.
+public struct OpenCodeUsage: Codable, Equatable, Sendable {
+    /// The three Go windows; `nil` when the Go key is missing or expired.
+    public var goWindows: [OpenCodeWindow]?
+    /// `active`, `expired` or `unavailable`.
+    public var goState: String
+    /// A short explanation when Go is not active.
+    public var goNote: String?
+    /// The formatted Zen credit balance, e.g. `$8.29`.
+    public var zenBalance: String?
+    /// `signedIn`, `signedOut` or `unavailable`.
+    public var zenState: String
+    /// The free models available to the local OpenCode install.
+    public var freeModels: [String]?
+
+    public init(
+        goWindows: [OpenCodeWindow]? = nil,
+        goState: String,
+        goNote: String? = nil,
+        zenBalance: String? = nil,
+        zenState: String,
+        freeModels: [String]? = nil
+    ) {
+        self.goWindows = goWindows
+        self.goState = goState
+        self.goNote = goNote
+        self.zenBalance = zenBalance
+        self.zenState = zenState
+        self.freeModels = freeModels
+    }
+}
+
 /// The data of a client panel that is not Codex.
 ///
 /// The menu bar panel switches between the full Codex panel and a compact
@@ -109,6 +160,8 @@ public struct ClientUsageSnapshot: Codable, Equatable, Sendable {
     /// The quota windows of the client; MiniMax reports the 5-hour and the
     /// weekly window separately.
     public var limits: [ClientQuotaLimit]?
+    /// The extra OpenCode Go/Zen/free-model state.
+    public var openCode: OpenCodeUsage?
 
     public init(
         client: String,
@@ -127,7 +180,8 @@ public struct ClientUsageSnapshot: Codable, Equatable, Sendable {
         note: String? = nil,
         resetCards: [ClientResetCard]? = nil,
         resetCardTotal: Int? = nil,
-        limits: [ClientQuotaLimit]? = nil
+        limits: [ClientQuotaLimit]? = nil,
+        openCode: OpenCodeUsage? = nil
     ) {
         self.client = client
         self.name = name
@@ -146,5 +200,6 @@ public struct ClientUsageSnapshot: Codable, Equatable, Sendable {
         self.resetCards = resetCards
         self.resetCardTotal = resetCardTotal
         self.limits = limits
+        self.openCode = openCode
     }
 }

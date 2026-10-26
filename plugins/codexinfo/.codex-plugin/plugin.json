@@ -1,6 +1,6 @@
 {
   "name": "codexinfo",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "Codex usage, reset cards, reset radar, output speed and local model health.",
   "author": { "name": "laoer" },
   "mcpServers": "./.mcp.json",
