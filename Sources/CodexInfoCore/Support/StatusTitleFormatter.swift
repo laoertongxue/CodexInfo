@@ -113,9 +113,11 @@ public enum StatusTitleFormatter {
             case .normal:
                 return StatusTitlePart(text: "正常", color: .good)
             case .suspected:
-                return StatusTitlePart(text: "疑似", color: .warn)
+                return StatusTitlePart(text: "性能", color: .warn)
             case .degraded:
-                return StatusTitlePart(text: "异常", color: .danger)
+                return StatusTitlePart(text: "性能异常", color: .danger)
+            case .route:
+                return StatusTitlePart(text: "降档", color: .warn)
             case .insufficient:
                 return StatusTitlePart(text: "数据不足", color: .muted)
             }

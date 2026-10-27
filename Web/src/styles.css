@@ -56,6 +56,7 @@ html, body, #root { margin: 0; background: transparent; color: var(--fg); }
 .pill.normal { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
 .pill.suspected { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
 .pill.degraded { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.pill.route { background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
 .pill.insufficient { background: var(--card); color: var(--muted); }
 .evidence { border: 1px dashed var(--new); border-radius: 6px; padding: 6px 7px; margin-top: 6px; background: color-mix(in srgb, var(--new) 5%, transparent); }
 .sources { margin: 5px 0; }

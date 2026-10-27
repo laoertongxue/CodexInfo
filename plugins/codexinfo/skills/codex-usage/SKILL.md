@@ -1,9 +1,9 @@
 ---
 name: codex-usage
-description: Use when the user asks about Codex quota, weekly usage, reset cards, reset radar, output tokens per second, or whether the model seems degraded. Calls CodexInfo MCP tools and summarizes.
+description: Use when the user asks about Codex quota, weekly usage, reset cards, reset radar, output tokens per second, or whether the model seems degraded. Calls AI-UseInfo MCP tools and summarizes.
 ---
 
-# CodexInfo
+# AI-UseInfo
 
 - For quota, reset cards, reset radar, tok/s or model health, call `get_usage_snapshot` first and answer from its result.
 - Answer in at most three lines: weekly remaining, output rate, model status.

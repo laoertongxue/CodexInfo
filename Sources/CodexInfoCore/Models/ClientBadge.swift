@@ -73,7 +73,7 @@ public enum ClientBadgeFormatter {
         }
         switch health {
         case .degraded: return .danger
-        case .suspected: return .warn
+        case .suspected, .route: return .warn
         default: return .normal
         }
     }

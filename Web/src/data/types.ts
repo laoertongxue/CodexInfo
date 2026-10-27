@@ -7,7 +7,7 @@
  */
 
 export type DataState = "fresh" | "stale" | "loading" | "error";
-export type HealthStatus = "normal" | "suspected" | "degraded" | "insufficient";
+export type HealthStatus = "normal" | "suspected" | "degraded" | "route" | "insufficient";
 export type SourceState = "ok" | "degraded" | "down";
 
 /** One quota window of a client. */
@@ -171,6 +171,7 @@ export interface UsageSnapshot {
     status: HealthStatus;
     baselineWindowDays: number;
     sampleTurns: number;
+    recentTurns?: number | null;
     model?: string | null;
     effort?: string | null;
     signals: HealthSignal[];

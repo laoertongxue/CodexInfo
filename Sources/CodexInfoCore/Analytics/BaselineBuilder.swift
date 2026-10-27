@@ -55,14 +55,21 @@ public enum BaselineBuilder {
     ) -> [TurnMetrics] {
         let start = now.addingTimeInterval(-Double(windowDays) * day)
         return chronological(turns.filter { turn in
-            guard turn.isCompleted else { return false }
-            guard (turn.completedAt ?? .distantPast) >= start else { return false }
-            // A turn without a duration or without a token usage record cannot
-            // carry a baseline sample.
-            guard (turn.durationMs ?? 0) > 0 else { return false }
-            guard turn.inputTokens + turn.outputTokens > 0 else { return false }
-            return true
+            guard isComparable(turn) else { return false }
+            return (turn.completedAt ?? .distantPast) >= start
         })
+    }
+
+    /// Whether a turn is comparable enough for the performance baseline.
+    ///
+    /// Short answers and turns dominated by tool execution have a different
+    /// rate profile; including them would make a task change look like a
+    /// model slowdown.
+    static func isComparable(_ turn: TurnMetrics) -> Bool {
+        guard turn.isCompleted, let duration = turn.durationMs, duration > 0 else { return false }
+        guard turn.inputTokens + turn.outputTokens > 0 else { return false }
+        guard turn.outputTokens >= 50 else { return false }
+        return turn.toolMs / duration <= 0.5
     }
 
     /// The turns of one baseline sample, oldest first.

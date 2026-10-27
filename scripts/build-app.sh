@@ -2,14 +2,14 @@
 # Builds the menu bar app bundle.
 #
 # The bundle holds the two release binaries, an Info.plist that makes the app
-# an accessory app with the `codexinfo` URL scheme, and an ad-hoc signature.
-# The script never touches the Codex configuration.
+# an accessory app with the `codexinfo` URL scheme, an icon and an ad-hoc
+# signature. The script never touches the Codex configuration.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-APP="$ROOT/dist/CodexInfo.app"
+APP="$ROOT/dist/AI-UseInfo.app"
 
 echo "==> Building the panel"
 bash "$ROOT/scripts/build-web.sh"
@@ -21,9 +21,10 @@ BIN_DIR="$(swift build -c release --show-bin-path)"
 
 echo "==> Assembling $APP"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/CodexInfoApp" "$APP/Contents/MacOS/CodexInfoApp"
 cp "$BIN_DIR/codexinfo-mcp" "$APP/Contents/MacOS/codexinfo-mcp"
+cp "$ROOT/assets/AI-UseInfo.icns" "$APP/Contents/Resources/AI-UseInfo.icns"
 chmod +x "$APP/Contents/MacOS/"*
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -33,11 +34,12 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <dict>
   <key>CFBundleExecutable</key><string>CodexInfoApp</string>
   <key>CFBundleIdentifier</key><string>com.laoer.codexinfo</string>
-  <key>CFBundleName</key><string>CodexInfo</string>
-  <key>CFBundleDisplayName</key><string>CodexInfo</string>
+  <key>CFBundleName</key><string>AI-UseInfo</string>
+  <key>CFBundleDisplayName</key><string>AI-UseInfo</string>
+  <key>CFBundleIconFile</key><string>AI-UseInfo</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.6</string>
-  <key>CFBundleVersion</key><string>7</string>
+  <key>CFBundleShortVersionString</key><string>0.1.7</string>
+  <key>CFBundleVersion</key><string>8</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>

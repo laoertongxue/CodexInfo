@@ -1,13 +1,13 @@
 {
   "name": "codexinfo",
-  "version": "0.1.6",
-  "description": "Codex usage, reset cards, reset radar, output speed and local model health.",
+  "version": "0.1.7",
+  "description": "AI-UseInfo: Codex, Qoder, MiniMax, OpenCode and DeepSeek usage, reset signals, output speed and local model health.",
   "author": { "name": "laoer" },
   "mcpServers": "./.mcp.json",
   "skills": "./skills/",
   "interface": {
-    "displayName": "CodexInfo",
-    "shortDescription": "Quota, reset cards, tok/s and local model health",
+    "displayName": "AI-UseInfo",
+    "shortDescription": "Quota, reset signals, tok/s and local model health",
     "category": "Developer Tools",
     "composerIcon": "./assets/icon.svg",
     "logo": "./assets/icon.svg"

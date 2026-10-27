@@ -32,7 +32,7 @@ public enum DashboardError: LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .appNotRunning:
-            return "CodexInfo 菜单栏 App 没有运行，请先启动它（应用包 dist/CodexInfo.app）；"
+            return "AI-UseInfo 菜单栏 App 没有运行，请先启动它（应用包 dist/AI-UseInfo.app）；"
                 + "插件摘要仍然可用。"
         }
     }

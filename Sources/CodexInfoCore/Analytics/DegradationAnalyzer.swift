@@ -1,12 +1,22 @@
 import Foundation
 
-/// Turns a local baseline and the recent turns into the four-state verdict.
+/// Turns a local baseline and the recent turns into a performance/route verdict.
 ///
-/// The verdict only compares this machine's own history; it is never an
-/// official conclusion about the upstream model.
+/// The verdict never claims that the model's capability dropped. Local
+/// telemetry cannot measure IQ without a fixed task set; it can only show a
+/// sustained performance deviation or a route downgrade.
 public enum DegradationAnalyzer {
-    /// The signals that measure the performance of a turn.
-    static let performanceSignals: [HealthSignalID] = [.outputRate, .ttft, .reasoningShare, .toolDensity]
+    /// The performance metrics that take part in the verdict.
+    static let performanceSignals: [HealthSignalID] = [.outputRate, .ttft]
+
+    /// The number of recent turns compared with the baseline.
+    static let recentWindow = 5
+
+    /// The minimum baseline sample behind a non-normal verdict.
+    static let verdictMinimumBaselineTurns = 20
+
+    /// How many of the recent turns must cross a threshold.
+    static let minimumRecentHits = 3
 
     /// A turn only counts as current when it finished inside this window.
     static let freshnessWindow: TimeInterval = 86_400
@@ -21,32 +31,32 @@ public enum DegradationAnalyzer {
         minimumTurns: Int = 8,
         thresholds: HealthThresholds = .standard
     ) -> HealthSnapshot {
-        let disclaimer = "基于本机近 \(windowDays) 天基线，不代表官方结论"
-        // The turns arrive in session order, so they are sorted before the
-        // most recent one is picked.
+        let disclaimer = "仅比较本机近 \(windowDays) 天性能与路由，不判断模型能力"
         let completed = BaselineBuilder.chronological(currentTurns.filter(\.isCompleted))
-        let fresh = completed.filter { ($0.completedAt ?? .distantPast) >= now.addingTimeInterval(-freshnessWindow) }
+        let comparable = completed.filter(BaselineBuilder.isComparable)
+        let fresh = comparable.filter {
+            ($0.completedAt ?? .distantPast) >= now.addingTimeInterval(-freshnessWindow)
+        }
 
         guard let latest = fresh.last else {
-            // Nothing finished in the last 24 hours, so nothing is current.
             return HealthSnapshot(
                 status: .insufficient,
                 baselineWindowDays: windowDays,
                 sampleTurns: usableBaselineCount(baselineTurns, now: now, windowDays: windowDays),
+                recentTurns: 0,
                 model: nil,
                 effort: nil,
                 signals: [],
-                disclaimer: "\(disclaimer) · 24 小时内没有已完成轮次"
+                disclaimer: "\(disclaimer) · 24 小时内没有已完成的可比轮次"
             )
         }
 
         guard let model = latest.model, let effort = latest.reasoningEffort else {
-            // The route of the current turn is unknown. An unfiltered baseline
-            // would mix every session, so the verdict stays 数据不足.
             return HealthSnapshot(
                 status: .insufficient,
                 baselineWindowDays: windowDays,
                 sampleTurns: usableBaselineCount(baselineTurns, now: now, windowDays: windowDays),
+                recentTurns: 0,
                 model: latest.model,
                 effort: latest.reasoningEffort,
                 signals: [],
@@ -54,6 +64,13 @@ public enum DegradationAnalyzer {
             )
         }
 
+        let routeRecent = fresh.filter { turn in
+            turn.model == model
+                && turn.reasoningEffort == effort
+                && turn.serviceTier == latest.serviceTier
+                && turn.provider == latest.provider
+        }
+        let recent = Array(routeRecent.suffix(Self.recentWindow))
         let sample = BaselineBuilder.eligibleTurns(
             from: baselineTurns,
             now: now,
@@ -63,11 +80,12 @@ public enum DegradationAnalyzer {
             serviceTier: latest.serviceTier,
             provider: latest.provider
         )
+        let requiredTurns = max(minimumTurns, Self.verdictMinimumBaselineTurns)
         guard let baseline = BaselineBuilder.build(
             from: baselineTurns,
             now: now,
             windowDays: windowDays,
-            minTurns: minimumTurns,
+            minTurns: requiredTurns,
             model: model,
             effort: effort,
             serviceTier: latest.serviceTier,
@@ -77,72 +95,149 @@ public enum DegradationAnalyzer {
                 status: .insufficient,
                 baselineWindowDays: windowDays,
                 sampleTurns: sample.count,
+                recentTurns: recent.count,
                 model: model,
                 effort: effort,
                 signals: [],
-                disclaimer: "\(disclaimer) · 基线样本不足"
+                disclaimer: "\(disclaimer) · 基线至少 \(requiredTurns) 轮"
             )
         }
 
-        // The current value is the most recent completed turn, the persistence
-        // of a signal is judged over the last three of them.
-        let recent = Array(fresh.suffix(3))
-        let evaluations = recent.map { evaluate($0, baseline: baseline, thresholds: thresholds) }
-        let current = evaluations.last ?? TurnEvaluation()
+        guard recent.count >= Self.recentWindow else {
+            return HealthSnapshot(
+                status: .insufficient,
+                baselineWindowDays: windowDays,
+                sampleTurns: baseline.turns.count,
+                recentTurns: recent.count,
+                model: model,
+                effort: effort,
+                signals: [],
+                disclaimer: "\(disclaimer) · 近 \(Self.recentWindow) 轮可比样本不足"
+            )
+        }
+
+        let rateValues = recent.compactMap { BaselineBuilder.value(for: .outputRate, turn: $0) }
+        let ttftValues = recent.compactMap { BaselineBuilder.value(for: .ttft, turn: $0) }
+        let rateBase = baseline.medians[.outputRate]
+        let ttftBase = baseline.medians[.ttft]
+
+        let rateHits = recent.filter {
+            judgement(for: .outputRate, turn: $0, baseline: baseline, thresholds: thresholds) == .hit
+        }.count
+        let ttftHits = recent.filter {
+            judgement(for: .ttft, turn: $0, baseline: baseline, thresholds: thresholds) == .hit
+        }.count
+
+        let rateMedian = median(rateValues)
+        let ttftMedian = median(ttftValues)
+        let rateZ = rateMedian.flatMap { value in
+            rateBase.flatMap {
+                robustZ(
+                    value,
+                    $0,
+                    baseline.mads[.outputRate] ?? 0,
+                    baseline.iqrs[.outputRate] ?? 0
+                )
+            }
+        }
+        let ttftZ = ttftMedian.flatMap { value in
+            ttftBase.flatMap {
+                robustZ(
+                    value,
+                    $0,
+                    baseline.mads[.ttft] ?? 0,
+                    baseline.iqrs[.ttft] ?? 0
+                )
+            }
+        }
+
+        let rateFlagged: Bool
+        if let rateMedian, let rateBase, rateBase > 0,
+           rateValues.count >= Self.minimumRecentHits,
+           rateHits >= Self.minimumRecentHits,
+           rateMedian <= rateBase * thresholds.rateRatio,
+           let rateZ {
+            rateFlagged = rateZ <= -2
+        } else {
+            rateFlagged = false
+        }
+
+        let ttftFlagged: Bool
+        if let ttftMedian, let ttftBase, ttftBase > 0,
+           ttftValues.count >= Self.minimumRecentHits,
+           ttftHits >= Self.minimumRecentHits,
+           ttftMedian >= ttftBase * thresholds.ttftRatio,
+           ttftMedian >= ttftBase + thresholds.ttftDeltaMs,
+           let ttftZ {
+            ttftFlagged = ttftZ >= 2
+        } else {
+            ttftFlagged = false
+        }
 
         var signals: [HealthSignal] = []
-        var performanceHits = 0
-        for metric in performanceSignals {
-            guard let value = current.values[metric], let base = baseline.medians[metric] else { continue }
-            guard let judgement = current.judgements[metric], judgement != .unknown else { continue }
-            if judgement == .hit { performanceHits += 1 }
+        if let rateMedian, let rateBase {
             signals.append(
                 HealthSignal(
-                    id: metric,
-                    label: label(for: metric),
-                    current: value,
-                    baseline: base,
-                    flagged: judgement == .hit,
-                    detail: detail(for: metric, current: value, baseline: base)
+                    id: .outputRate,
+                    label: label(for: .outputRate),
+                    current: rateMedian,
+                    baseline: rateBase,
+                    flagged: rateFlagged,
+                    detail: detail(
+                        for: .outputRate,
+                        current: rateMedian,
+                        baseline: rateBase,
+                        turns: recent.count
+                    )
+                )
+            )
+        }
+        if let ttftMedian, let ttftBase {
+            signals.append(
+                HealthSignal(
+                    id: .ttft,
+                    label: label(for: .ttft),
+                    current: ttftMedian,
+                    baseline: ttftBase,
+                    flagged: ttftFlagged,
+                    detail: detail(
+                        for: .ttft,
+                        current: ttftMedian,
+                        baseline: ttftBase,
+                        turns: recent.count
+                    )
                 )
             )
         }
         if routeMismatch {
-            // A mismatch is only evidence. Only a comparable downgrade counts
-            // toward the degraded verdict (design 5.6.3).
             signals.append(
                 HealthSignal(
                     id: .route,
                     label: routeDowngrade ? "路由降档" : "路由不一致",
-                    current: 1,
+                    current: routeDowngrade ? 1 : 0,
                     baseline: 0,
-                    flagged: true,
-                    detail: routeDowngrade ? "实际档位低于选择的档位" : "实际模型/档位与选择不一致"
+                    flagged: routeDowngrade,
+                    detail: routeDowngrade ? "实际档位低于选择的档位" : "实际模型/档位与选择不一致，未确认降档"
                 )
             )
         }
 
-        // A degraded verdict needs a signal that persists over the last three
-        // turns, not a single hit.
-        let persistent = performanceSignals.contains { metric in
-            evaluations.filter { $0.judgements[metric] == .hit }.count >= 2
-        }
-        // A route mismatch alone never counts as a signal: it is reported as
-        // evidence. Only a comparable downgrade counts toward the verdict.
-        let totalSignals = performanceHits + (routeDowngrade ? 1 : 0)
-
         let status: HealthStatus
-        if totalSignals >= 3, persistent, recent.count >= 3 {
+        if routeDowngrade {
+            status = .route
+        } else if rateFlagged && ttftFlagged {
             status = .degraded
-        } else if performanceHits >= 1, totalSignals >= 2 || routeMismatch {
+        } else if rateFlagged || ttftFlagged {
             status = .suspected
         } else {
             status = .normal
         }
+
         return HealthSnapshot(
             status: status,
             baselineWindowDays: windowDays,
             sampleTurns: baseline.turns.count,
+            recentTurns: recent.count,
             model: baseline.model,
             effort: baseline.effort,
             signals: signals,
@@ -151,10 +246,6 @@ public enum DegradationAnalyzer {
     }
 
     /// The number of turns of the window that can carry a baseline sample.
-    ///
-    /// The count ignores the route keys on purpose: the route of the current
-    /// turn may be unknown, and the panel still has to show how many turns
-    /// this machine recorded.
     private static func usableBaselineCount(
         _ baselineTurns: [TurnMetrics],
         now: Date,
@@ -164,58 +255,58 @@ public enum DegradationAnalyzer {
     }
 
     /// The robust z score of one value, or `nil` when the baseline has no
-    /// spread at all and the signal must not be judged (design 5.6.1).
+    /// spread at all and the signal must not be judged.
     private static func robustZ(_ value: Double, _ median: Double, _ mad: Double, _ iqr: Double) -> Double? {
         if mad > 0 { return 0.6745 * (value - median) / mad }
         if iqr > 0 { return (value - median) / (iqr / 1.349) }
         return nil
     }
 
-    /// The judgement of every performance signal inside one turn.
-    private static func evaluate(
-        _ turn: TurnMetrics,
+    /// The judgement of one performance signal inside one turn.
+    private static func judgement(
+        for metric: HealthSignalID,
+        turn: TurnMetrics,
         baseline: BaselineStats,
         thresholds: HealthThresholds
-    ) -> TurnEvaluation {
-        var evaluation = TurnEvaluation()
-
-        if let current = BaselineBuilder.value(for: .outputRate, turn: turn),
-           let base = baseline.medians[.outputRate], base > 0 {
-            evaluation.values[.outputRate] = current
-            if current > base * thresholds.rateRatio {
-                evaluation.judgements[.outputRate] = .clear
-            } else if let z = robustZ(current, base, baseline.mads[.outputRate] ?? 0, baseline.iqrs[.outputRate] ?? 0) {
-                evaluation.judgements[.outputRate] = z <= -2 ? .hit : .clear
-            } else {
-                evaluation.judgements[.outputRate] = .unknown
-            }
+    ) -> Judgement {
+        guard let current = BaselineBuilder.value(for: metric, turn: turn),
+              let base = baseline.medians[metric], base > 0 else {
+            return .unknown
         }
-
-        if let current = BaselineBuilder.value(for: .ttft, turn: turn),
-           let base = baseline.medians[.ttft], base > 0 {
-            evaluation.values[.ttft] = current
+        switch metric {
+        case .outputRate:
+            if current > base * thresholds.rateRatio { return .clear }
+            guard let z = robustZ(
+                current,
+                base,
+                baseline.mads[metric] ?? 0,
+                baseline.iqrs[metric] ?? 0
+            ) else { return .unknown }
+            return z <= -2 ? .hit : .clear
+        case .ttft:
             if current < base * thresholds.ttftRatio, current < base + thresholds.ttftDeltaMs {
-                evaluation.judgements[.ttft] = .clear
-            } else if let z = robustZ(current, base, baseline.mads[.ttft] ?? 0, baseline.iqrs[.ttft] ?? 0) {
-                evaluation.judgements[.ttft] = z >= 2 ? .hit : .clear
-            } else {
-                evaluation.judgements[.ttft] = .unknown
+                return .clear
             }
+            guard let z = robustZ(
+                current,
+                base,
+                baseline.mads[metric] ?? 0,
+                baseline.iqrs[metric] ?? 0
+            ) else { return .unknown }
+            return z >= 2 ? .hit : .clear
+        default:
+            return .unknown
         }
+    }
 
-        if let current = BaselineBuilder.value(for: .reasoningShare, turn: turn),
-           let base = baseline.medians[.reasoningShare], base >= 0.05 {
-            evaluation.values[.reasoningShare] = current
-            evaluation.judgements[.reasoningShare] = current <= base * thresholds.reasoningRatio ? .hit : .clear
+    private static func median(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let middle = sorted.count / 2
+        if sorted.count.isMultiple(of: 2) {
+            return (sorted[middle - 1] + sorted[middle]) / 2
         }
-
-        if let current = BaselineBuilder.value(for: .toolDensity, turn: turn),
-           let base = baseline.medians[.toolDensity], base >= 0.5 {
-            evaluation.values[.toolDensity] = current
-            evaluation.judgements[.toolDensity] = current <= base * thresholds.toolDensityRatio ? .hit : .clear
-        }
-
-        return evaluation
+        return sorted[middle]
     }
 
     private static func label(for metric: HealthSignalID) -> String {
@@ -228,16 +319,23 @@ public enum DegradationAnalyzer {
         }
     }
 
-    private static func detail(for metric: HealthSignalID, current: Double, baseline: Double) -> String {
+    private static func detail(
+        for metric: HealthSignalID,
+        current: Double,
+        baseline: Double,
+        turns: Int
+    ) -> String {
+        let delta = baseline > 0 ? (current / baseline - 1) * 100 : 0
+        let percent = String(format: "%+.0f%%", delta)
         switch metric {
         case .outputRate:
-            return "当前 \(String(format: "%.1f", current)) / 基线 \(String(format: "%.1f", baseline)) tok/s"
+            return "近 \(turns) 轮中位 \(String(format: "%.1f", current)) / 基线 \(String(format: "%.1f", baseline)) tok/s（\(percent)）"
         case .ttft:
-            return "当前 \(String(format: "%.0f", current))ms / 基线 \(String(format: "%.0f", baseline))ms"
+            return "近 \(turns) 轮中位 \(String(format: "%.0f", current))ms / 基线 \(String(format: "%.0f", baseline))ms（\(percent)）"
         case .reasoningShare:
-            return "当前 \(Int(current * 100))% / 基线 \(Int(baseline * 100))%"
+            return "近 \(turns) 轮中位 \(Int(current * 100))% / 基线 \(Int(baseline * 100))%"
         case .toolDensity:
-            return "当前 \(String(format: "%.2f", current)) / 基线 \(String(format: "%.2f", baseline))"
+            return "近 \(turns) 轮中位 \(String(format: "%.2f", current)) / 基线 \(String(format: "%.2f", baseline))"
         case .route:
             return "实际模型/档位与选择不一致"
         }
@@ -252,10 +350,4 @@ private enum Judgement {
     case clear
     /// The signal cannot be judged, so it never counts as a hit.
     case unknown
-}
-
-/// The values and judgements of one turn.
-private struct TurnEvaluation {
-    var values: [HealthSignalID: Double] = [:]
-    var judgements: [HealthSignalID: Judgement] = [:]
 }

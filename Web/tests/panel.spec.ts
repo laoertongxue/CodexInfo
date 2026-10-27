@@ -118,21 +118,31 @@ test("a weekly reset five minutes ago is marked as just reset", async ({ page })
   await expect(page.getByTestId("just-reset")).toHaveText("刚刚重置");
 });
 
-test("a normal verdict keeps the evidence collapsed but shows the disclaimer", async ({ page }) => {
+test("a normal verdict keeps the evidence collapsed", async ({ page }) => {
   await page.goto("/");
   const health = page.getByTestId("model-health");
   await expect(page.getByTestId("health-verdict")).toHaveText("正常");
-  await expect(page.getByTestId("health-disclaimer")).toHaveText("基于本机近 7 天基线，不代表官方结论");
   await expect(page.getByTestId("health-evidence")).toBeHidden();
+  await expect(health).not.toContainText("不判断模型能力");
 });
 
-test("an abnormal verdict expands the evidence", async ({ page }) => {
+test("an abnormal verdict expands the performance evidence", async ({ page }) => {
   await page.goto("/?fixture=suspected");
   const health = page.getByTestId("model-health");
-  await expect(page.getByTestId("health-verdict")).toHaveText("疑似降智");
-  await expect(page.getByTestId("health-disclaimer")).toHaveText("基于本机近 7 天基线，不代表官方结论");
+  await expect(page.getByTestId("health-verdict")).toHaveText("性能异常");
+  await expect(health).not.toContainText("降智");
   await expect(page.getByTestId("health-evidence")).toBeVisible();
-  await expect(health).toContainText("当前 33.1 / 基线 45.1 tok/s");
+  await expect(health).toContainText("近 5 轮中位 33.1 / 基线 45.1 tok/s");
+  await expect(health).not.toContainText("能力未验证");
+  await expect(health).not.toContainText("不判断模型能力");
+});
+
+test("a route downgrade is shown as route, not as a capability verdict", async ({ page }) => {
+  await page.goto("/?fixture=route");
+  const health = page.getByTestId("model-health");
+  await expect(page.getByTestId("health-verdict")).toHaveText("路由降档");
+  await expect(health).not.toContainText("降智");
+  await expect(page.getByTestId("health-evidence")).toContainText("实际档位低于选择的档位");
 });
 
 test("an area in error shows a dash instead of the placeholder number", async ({ page }) => {

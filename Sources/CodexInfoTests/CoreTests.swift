@@ -1114,10 +1114,10 @@ func registerCoreTests() {
         context.expectEqual(await indexer.cacheWrites, 1, "the change waits for the interval")
     }
 
-    test("DegradationAnalyzer returns normal for a single weak signal") { context in
+    test("DegradationAnalyzer reports normal for five stable recent turns") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = makeTurns(count: 1, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 5, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
         let result = DegradationAnalyzer.analyze(
             baselineTurns: baseline,
             currentTurns: current,
@@ -1127,51 +1127,125 @@ func registerCoreTests() {
             thresholds: .standard
         )
         context.expectEqual(result.status, .normal)
+        context.expectEqual(result.sampleTurns, 20)
+        context.expectEqual(result.recentTurns, 5)
+        context.expectTrue(result.disclaimer.contains("不判断模型能力"))
     }
 
-    test("DegradationAnalyzer returns suspected for two performance signals") { context in
+    test("DegradationAnalyzer ignores one slow turn among five") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = makeTurns(count: 1, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 2)
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = [
+            makeTurn(id: "mixed-0", completedAt: now.addingTimeInterval(-240)),
+            makeTurn(id: "mixed-1", completedAt: now.addingTimeInterval(-180)),
+            makeTurn(id: "mixed-2", completedAt: now.addingTimeInterval(-120)),
+            makeTurn(id: "mixed-3", completedAt: now.addingTimeInterval(-60)),
+            makeTurn(id: "mixed-4", completedAt: now, ttftMs: 3_000, modelItemMs: 8_000),
+        ]
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .normal)
+        context.expectEqual(result.signals.first { $0.id == .outputRate }?.flagged, false)
+        context.expectEqual(result.signals.first { $0.id == .ttft }?.flagged, false)
+    }
+
+    test("DegradationAnalyzer reports a performance anomaly for a sustained rate drop") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 5, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 1)
         let result = DegradationAnalyzer.analyze(
             baselineTurns: baseline, currentTurns: current, routeMismatch: false,
             now: now, windowDays: 7, thresholds: .standard
         )
         context.expectEqual(result.status, .suspected)
+        context.expectEqual(result.signals.first { $0.id == .outputRate }?.flagged, true)
+        context.expectTrue(result.signals.first { $0.id == .outputRate }?.detail.contains("近 5 轮中位") == true)
     }
 
-    test("DegradationAnalyzer returns degraded for three performance signals") { context in
+    test("DegradationAnalyzer reports a multi-metric performance anomaly") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = makeTurns(count: 3, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 3)
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 5, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 2)
         let result = DegradationAnalyzer.analyze(
             baselineTurns: baseline, currentTurns: current, routeMismatch: false,
             now: now, windowDays: 7, thresholds: .standard
         )
         context.expectEqual(result.status, .degraded)
+        context.expectEqual(result.signals.first { $0.id == .outputRate }?.flagged, true)
+        context.expectEqual(result.signals.first { $0.id == .ttft }?.flagged, true)
     }
 
-    test("DegradationAnalyzer reports insufficient baseline") { context in
+    test("DegradationAnalyzer ignores reasoning and tool-density changes") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 3, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = makeTurns(count: 1, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = [
+            makeTurn(id: "task-mix-0", completedAt: now.addingTimeInterval(-240), reasoningOutputTokens: 80, toolCallCount: 10),
+            makeTurn(id: "task-mix-1", completedAt: now.addingTimeInterval(-180), reasoningOutputTokens: 80, toolCallCount: 10),
+            makeTurn(id: "task-mix-2", completedAt: now.addingTimeInterval(-120), reasoningOutputTokens: 80, toolCallCount: 10),
+            makeTurn(id: "task-mix-3", completedAt: now.addingTimeInterval(-60), reasoningOutputTokens: 80, toolCallCount: 10),
+            makeTurn(id: "task-mix-4", completedAt: now, reasoningOutputTokens: 80, toolCallCount: 10),
+        ]
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .normal)
+        context.expectEqual(result.signals.contains { $0.id == .reasoningShare }, false)
+        context.expectEqual(result.signals.contains { $0.id == .toolDensity }, false)
+    }
+
+    test("DegradationAnalyzer reports insufficient for a weak baseline") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 5, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
         let result = DegradationAnalyzer.analyze(
             baselineTurns: baseline, currentTurns: current, routeMismatch: false,
             now: now, windowDays: 7, thresholds: .standard
         )
         context.expectEqual(result.status, .insufficient)
+        context.expectTrue(result.disclaimer.contains("至少 20 轮"))
     }
 
-    test("DegradationAnalyzer escalates a route anomaly with one performance hit to suspected") { context in
+    test("DegradationAnalyzer reports insufficient for fewer than five recent turns") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = [makeTurn(id: "route-1", completedAt: now, modelItemMs: 8_000)]
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 3, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 2)
         let result = DegradationAnalyzer.analyze(
-            baselineTurns: baseline, currentTurns: current, routeMismatch: true,
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
             now: now, windowDays: 7, thresholds: .standard
         )
-        context.expectEqual(result.status, .suspected)
+        context.expectEqual(result.status, .insufficient)
+        context.expectTrue(result.disclaimer.contains("近 5 轮"))
+    }
+
+    test("DegradationAnalyzer reports a comparable route downgrade as route") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 5, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current,
+            routeMismatch: true, routeDowngrade: true,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .route)
+        context.expectEqual(result.signals.first { $0.id == .route }?.label, "路由降档")
         context.expectEqual(result.signals.first { $0.id == .route }?.flagged, true)
+    }
+
+    test("DegradationAnalyzer keeps a plain route mismatch as evidence only") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = makeTurns(count: 5, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current,
+            routeMismatch: true, routeDowngrade: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .normal)
+        context.expectEqual(result.signals.first { $0.id == .route }?.label, "路由不一致")
+        context.expectEqual(result.signals.first { $0.id == .route }?.flagged, false)
     }
 
     test("RouteComparison only calls a comparable route a downgrade") { context in
@@ -1222,107 +1296,41 @@ func registerCoreTests() {
         )
     }
 
-    test("DegradationAnalyzer keeps a model swap out of the degraded verdict") { context in
+    test("DegradationAnalyzer excludes short and tool-heavy turns from the sample") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = makeTurns(count: 3, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 2)
-        // A model swap is a mismatch. The tiers are not comparable, so the
-        // mismatch is only evidence and never counts toward the verdict.
-        let result = DegradationAnalyzer.analyze(
-            baselineTurns: baseline, currentTurns: current,
-            routeMismatch: true, routeDowngrade: false,
-            now: now, windowDays: 7, thresholds: .standard
-        )
-        context.expectEqual(result.status, .suspected, "two performance hits plus a mismatch")
-        context.expectEqual(result.signals.first { $0.id == .route }?.label, "路由不一致")
-    }
-
-    test("DegradationAnalyzer counts a comparable route downgrade toward the degraded verdict") { context in
-        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = makeTurns(count: 3, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 2)
-        let result = DegradationAnalyzer.analyze(
-            baselineTurns: baseline, currentTurns: current,
-            routeMismatch: true, routeDowngrade: true,
-            now: now, windowDays: 7, thresholds: .standard
-        )
-        context.expectEqual(result.status, .degraded, "two performance hits plus a downgrade")
-        context.expectEqual(result.signals.first { $0.id == .route }?.label, "路由降档")
-    }
-
-    test("DegradationAnalyzer reports insufficient when no turn finished in the last 24 hours") { context in
-        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = [makeTurn(id: "stale-1", completedAt: now.addingTimeInterval(-3 * 86_400))]
-        let result = DegradationAnalyzer.analyze(
-            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
-            now: now, windowDays: 7, thresholds: .standard
-        )
-        context.expectEqual(result.status, .insufficient)
-        context.expectTrue(result.disclaimer.contains("24 小时内没有已完成轮次"))
-    }
-
-    test("DegradationAnalyzer needs a signal to persist over the last three turns for degraded") { context in
-        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = [
-            makeTurn(id: "p-1", completedAt: now.addingTimeInterval(-120)),
-            makeTurn(id: "p-2", completedAt: now.addingTimeInterval(-60)),
-            makeTurn(id: "p-3", completedAt: now, ttftMs: 3_000, reasoningOutputTokens: 4, modelItemMs: 8_000),
-        ]
-        let result = DegradationAnalyzer.analyze(
-            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
-            now: now, windowDays: 7, thresholds: .standard
-        )
-        context.expectEqual(result.status, .suspected)
-    }
-
-    test("DegradationAnalyzer caps the verdict at suspected when fewer than three recent turns exist") { context in
-        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = [
-            makeTurn(id: "s-1", completedAt: now.addingTimeInterval(-60), ttftMs: 3_000, reasoningOutputTokens: 4, modelItemMs: 8_000),
-            makeTurn(id: "s-2", completedAt: now, ttftMs: 3_000, reasoningOutputTokens: 4, modelItemMs: 8_000),
-        ]
-        let result = DegradationAnalyzer.analyze(
-            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
-            now: now, windowDays: 7, thresholds: .standard
-        )
-        context.expectEqual(result.status, .suspected)
-    }
-
-    test("DegradationAnalyzer excludes turns without duration or usage from the baseline") { context in
-        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        var baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        var baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
         baseline.append(makeTurn(id: "no-duration", completedAt: now, durationMs: 0, modelItemMs: 400))
         baseline.append(makeTurn(id: "no-usage", completedAt: now, inputTokens: 0, outputTokens: 0))
-        let current = [makeTurn(id: "ok-1", completedAt: now)]
+        baseline.append(makeTurn(id: "short", completedAt: now, outputTokens: 10))
+        baseline.append(makeTurn(id: "tool-heavy", completedAt: now, toolMs: 9_000))
+        let current = makeTurns(count: 5, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
         let result = DegradationAnalyzer.analyze(
             baselineTurns: baseline, currentTurns: current, routeMismatch: false,
             now: now, windowDays: 7, thresholds: .standard
         )
-        context.expectEqual(result.sampleTurns, 8)
+        context.expectEqual(result.sampleTurns, 20)
         context.expectEqual(result.status, .normal)
     }
 
     test("DegradationAnalyzer keeps another provider out of the baseline") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        var baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        var baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
         baseline += (0..<8).map { index in
             makeTurn(id: "other-\(index)", provider: "other-provider", completedAt: now.addingTimeInterval(-Double(index) * 60))
         }
-        let current = [makeTurn(id: "ok-1", completedAt: now)]
+        let current = makeTurns(count: 5, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
         let result = DegradationAnalyzer.analyze(
             baselineTurns: baseline, currentTurns: current, routeMismatch: false,
             now: now, windowDays: 7, thresholds: .standard
         )
-        context.expectEqual(result.sampleTurns, 8)
+        context.expectEqual(result.sampleTurns, 20)
     }
 
-    test("DegradationAnalyzer reports insufficient when the current turn has no model") { context in
+    test("DegradationAnalyzer reports insufficient when the newest turn has no model") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = [makeTurn(id: "unknown-1", model: nil, completedAt: now)]
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        var current = makeTurns(count: 4, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        current.append(makeTurn(id: "unknown-1", model: nil, completedAt: now))
         let result = DegradationAnalyzer.analyze(
             baselineTurns: baseline, currentTurns: current, routeMismatch: false,
             now: now, windowDays: 7, thresholds: .standard
@@ -1331,10 +1339,16 @@ func registerCoreTests() {
         context.expectTrue(result.disclaimer.contains("缺少模型或档位信息"))
     }
 
-    test("DegradationAnalyzer conservative thresholds accept a slower turn that standard flags") { context in
+    test("DegradationAnalyzer conservative thresholds accept a slower recent window") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
-        let current = [makeTurn(id: "slow-1", completedAt: now, ttftMs: 2_525)]
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = [
+            makeTurn(id: "slow-0", completedAt: now.addingTimeInterval(-240), ttftMs: 3_500),
+            makeTurn(id: "slow-1", completedAt: now.addingTimeInterval(-180), ttftMs: 3_500),
+            makeTurn(id: "slow-2", completedAt: now.addingTimeInterval(-120), ttftMs: 3_500),
+            makeTurn(id: "slow-3", completedAt: now.addingTimeInterval(-60), ttftMs: 3_500),
+            makeTurn(id: "slow-4", completedAt: now, ttftMs: 3_500),
+        ]
         let standard = DegradationAnalyzer.analyze(
             baselineTurns: baseline, currentTurns: current, routeMismatch: false,
             now: now, windowDays: 7, thresholds: .standard
@@ -1347,9 +1361,21 @@ func registerCoreTests() {
         context.expectEqual(conservative.signals.first { $0.id == .ttft }?.flagged, false)
     }
 
+    test("DegradationAnalyzer reports insufficient when no turn finished in the last 24 hours") { context in
+        let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let current = [makeTurn(id: "stale-1", completedAt: now.addingTimeInterval(-3 * 86_400))]
+        let result = DegradationAnalyzer.analyze(
+            baselineTurns: baseline, currentTurns: current, routeMismatch: false,
+            now: now, windowDays: 7, thresholds: .standard
+        )
+        context.expectEqual(result.status, .insufficient)
+        context.expectTrue(result.disclaimer.contains("24 小时内没有已完成"))
+    }
+
     test("DegradationAnalyzer counts usable turns on the insufficient paths") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
         let stale = DegradationAnalyzer.analyze(
             baselineTurns: baseline,
             currentTurns: [makeTurn(id: "x-1", completedAt: now.addingTimeInterval(-3 * 86_400))],
@@ -1361,16 +1387,17 @@ func registerCoreTests() {
             routeMismatch: false, now: now, windowDays: 7, thresholds: .standard
         )
         context.expectEqual(stale.status, .insufficient)
-        context.expectEqual(stale.sampleTurns, 8)
+        context.expectEqual(stale.sampleTurns, 20)
         context.expectEqual(unknown.status, .insufficient)
-        context.expectEqual(unknown.sampleTurns, 8)
+        context.expectEqual(unknown.sampleTurns, 20)
     }
 
-    test("DegradationAnalyzer states the baseline disclaimer on every path") { context in
+    test("DegradationAnalyzer states the performance-only disclaimer on every path") { context in
         let now = DateParsing.iso8601("2026-10-24T12:00:00Z")!
-        let baseline = makeTurns(count: 8, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        let baseline = makeTurns(count: 20, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
         let normal = DegradationAnalyzer.analyze(
-            baselineTurns: baseline, currentTurns: [makeTurn(id: "d-1", completedAt: now)],
+            baselineTurns: baseline,
+            currentTurns: makeTurns(count: 5, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0),
             routeMismatch: false, now: now, windowDays: 7, thresholds: .standard
         )
         let insufficient = DegradationAnalyzer.analyze(
@@ -1378,8 +1405,7 @@ func registerCoreTests() {
             now: now, windowDays: 7, thresholds: .standard
         )
         for snapshot in [normal, insufficient] {
-            context.expectTrue(snapshot.disclaimer.contains("基于本机近 7 天基线"))
-            context.expectTrue(snapshot.disclaimer.contains("不代表官方结论"))
+            context.expectTrue(snapshot.disclaimer.contains("不判断模型能力"))
         }
     }
 
@@ -2275,14 +2301,12 @@ func registerCoreTests() {
 
     test("SnapshotBuilder hands the configured window and minimum to the health verdict") { context in
         let now = Date(timeIntervalSince1970: 1_790_000_000)
-        // Two turns outside the 7 day window and three turns inside the last day.
-        let turns = [
-            makeTurn(id: "old-1", completedAt: now.addingTimeInterval(-10 * 86_400)),
-            makeTurn(id: "old-2", completedAt: now.addingTimeInterval(-10 * 86_400 + 60)),
-            makeTurn(id: "new-1", completedAt: now.addingTimeInterval(-7_200)),
-            makeTurn(id: "new-2", completedAt: now.addingTimeInterval(-3_600)),
-            makeTurn(id: "new-3", completedAt: now.addingTimeInterval(-600))
-        ]
+        // 26 recent turns and two turns outside the 7 day window. The builder
+        // hands the newest eight to the analyzer; the 30 day baseline keeps
+        // 20 comparable turns, the 7 day baseline keeps 18.
+        var turns = makeTurns(count: 26, model: "gpt-6.1-sol", effort: "xhigh", now: now, severity: 0)
+        turns.append(makeTurn(id: "old-1", completedAt: now.addingTimeInterval(-10 * 86_400)))
+        turns.append(makeTurn(id: "old-2", completedAt: now.addingTimeInterval(-10 * 86_400 + 60)))
         let builder = SnapshotBuilder(
             quota: StubQuotaProvider(snapshot: nil),
             credits: StubCreditsProvider(snapshot: nil),
@@ -2290,19 +2314,19 @@ func registerCoreTests() {
             account: StubAccountProvider(snapshot: nil),
             radar: StubRadarProvider(snapshot: .empty)
         )
-        // The 30 day window holds the two old turns, so they can carry the baseline.
-        let wide = await builder.build(now: now, windowDays: 30, minimumTurns: 2)
+        let wide = await builder.build(now: now, windowDays: 30, minimumTurns: 8)
         context.expectEqual(wide.health.baselineWindowDays, 30)
-        context.expectEqual(wide.health.sampleTurns, 2)
+        context.expectEqual(wide.health.sampleTurns, 20)
         context.expectEqual(wide.health.status, .normal)
-        // The 7 day window drops them, so the baseline stays empty.
-        let narrow = await builder.build(now: now, windowDays: 7, minimumTurns: 2)
+        // The 7 day window drops the two old turns; 18 baseline turns are
+        // below the 20-turn verdict floor.
+        let narrow = await builder.build(now: now, windowDays: 7, minimumTurns: 8)
         context.expectEqual(narrow.health.baselineWindowDays, 7)
-        context.expectEqual(narrow.health.sampleTurns, 0)
+        context.expectEqual(narrow.health.sampleTurns, 18)
         context.expectEqual(narrow.health.status, .insufficient)
-        // A minimum of eight turns is more than the sample holds.
-        let strict = await builder.build(now: now, windowDays: 30, minimumTurns: 8)
-        context.expectEqual(strict.health.sampleTurns, 2)
+        // A higher configured minimum is also honored.
+        let strict = await builder.build(now: now, windowDays: 30, minimumTurns: 25)
+        context.expectEqual(strict.health.sampleTurns, 20)
         context.expectEqual(strict.health.status, .insufficient)
     }
 

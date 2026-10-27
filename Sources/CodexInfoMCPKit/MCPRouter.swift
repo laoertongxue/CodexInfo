@@ -96,7 +96,7 @@ public struct MCPRouter: Sendable {
         }
         return [MCPJSON.response(id: id, result: ["contents": [[
             "uri": Self.panelResourceURI,
-            "name": "CodexInfo panel",
+            "name": "AI-UseInfo panel",
             "mimeType": Self.panelMIMEType,
             "text": panelHTML,
         ]]])]
@@ -151,7 +151,7 @@ public struct MCPRouter: Sendable {
                 try await toolService.openDashboard()
                 return MCPJSON.toolResult(
                     id: id,
-                    text: "已打开 CodexInfo 面板",
+                    text: "已打开 AI-UseInfo 面板",
                     structured: ["opened": true]
                 )
             default:
@@ -185,13 +185,13 @@ public struct MCPRouter: Sendable {
             ),
             [
                 "name": "show_usage_panel",
-                "description": "Render the CodexInfo dashboard as an MCP App.",
+                "description": "Render the AI-UseInfo dashboard as an MCP App.",
                 "inputSchema": ["type": "object", "properties": [:], "additionalProperties": false],
                 "_meta": uiMetadata,
             ],
             tool(
                 "open_dashboard",
-                "Open the CodexInfo menu-bar dashboard.",
+                "Open the AI-UseInfo menu-bar dashboard.",
                 [:]
             ),
         ]
@@ -222,8 +222,8 @@ public struct MCPRouter: Sendable {
     private var panelResource: [String: Any] {
         [
             "uri": Self.panelResourceURI,
-            "name": "CodexInfo panel",
-            "description": "The CodexInfo dashboard.",
+            "name": "AI-UseInfo panel",
+            "description": "The AI-UseInfo dashboard.",
             "mimeType": Self.panelMIMEType,
         ]
     }
@@ -251,8 +251,9 @@ public struct MCPRouter: Sendable {
     private static func healthLabel(_ status: HealthStatus) -> String {
         switch status {
         case .normal: return "正常"
-        case .suspected: return "疑似降智"
-        case .degraded: return "已降智"
+        case .suspected: return "性能异常"
+        case .degraded: return "性能异常（多项）"
+        case .route: return "路由降档"
         case .insufficient: return "数据不足"
         }
     }

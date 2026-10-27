@@ -52,7 +52,7 @@ function parseSnapshot(result: unknown): UsageSnapshot | null {
  */
 export class McpHost implements Host {
   mode = "mcp" as const;
-  private app = new App({ name: "CodexInfo", version: "0.1.6" }, {});
+  private app = new App({ name: "AI-UseInfo", version: "0.1.7" }, {});
   private handlers?: HostHandlers;
   private timer?: number;
 

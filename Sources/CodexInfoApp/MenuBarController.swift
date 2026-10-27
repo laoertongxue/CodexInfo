@@ -124,7 +124,7 @@ final class MenuBarController: NSObject {
         login.state = LaunchAtLogin.isEnabled ? .on : .off
         menu.addItem(login)
         menu.addItem(.separator())
-        let quit = item("退出 CodexInfo", #selector(NSApplication.terminate(_:)), "q")
+        let quit = item("退出 AI-UseInfo", #selector(NSApplication.terminate(_:)), "q")
         quit.target = NSApp
         menu.addItem(quit)
         return menu
@@ -156,7 +156,7 @@ final class MenuBarController: NSObject {
                 onClearLocalData: { self.environment.clearLocalData() }
             )
             let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-            window.title = "CodexInfo 设置"
+            window.title = "AI-UseInfo 设置"
             window.styleMask = [.titled, .closable]
             window.setContentSize(NSSize(width: 420, height: 560))
             settingsWindow = window

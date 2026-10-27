@@ -51,7 +51,7 @@ public actor CodexAppServerClient {
         let task = Task { [weak self] in
             do {
                 _ = try await transport.request(method: "initialize", params: [
-                    "clientInfo": ["name": "CodexInfo", "title": "CodexInfo", "version": AppConstants.version],
+                    "clientInfo": ["name": "AI-UseInfo", "title": "AI-UseInfo", "version": AppConstants.version],
                     "capabilities": [
                         "experimentalApi": false,
                         "requestAttestation": false,

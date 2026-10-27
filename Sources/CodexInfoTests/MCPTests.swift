@@ -29,7 +29,7 @@ func registerMCPTests() {
             return
         }
         context.expectEqual(info["name"] as? String, "codexinfo")
-        context.expectEqual(info["version"] as? String, "0.1.6")
+        context.expectEqual(info["version"] as? String, "0.1.7")
     }
 
     test("MCP initialize echoes a supported protocol version") { context in
@@ -329,7 +329,7 @@ func registerMCPTests() {
         let content = result["content"] as? [[String: Any]]
         let text = content?.first?["text"] as? String ?? ""
         context.expectTrue(text.contains("没有运行"), "the answer names the missing app")
-        context.expectTrue(text.contains("dist/CodexInfo.app"), "the answer carries the install hint")
+        context.expectTrue(text.contains("dist/AI-UseInfo.app"), "the answer carries the install hint")
     }
 
     test("MCP get_usage_snapshot forwards the refresh flag") { context in

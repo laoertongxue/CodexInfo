@@ -86,6 +86,9 @@ struct SettingsView: View {
                         Text(tier.label).tag(tier)
                     }
                 }
+                Text("判定至少需要 20 轮可比基线、近 5 轮中位；速度/首 token 受网络、上下文和工具影响，不作降智结论。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Text("保守档只在速率与首 token 上更严格。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -127,7 +130,7 @@ struct SettingsView: View {
                 Text("MiniMax 与 DeepSeek 的令牌只发往各自官方域；Qoder 只读本地用量日志。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("设置保存在 ~/Library/Application Support/CodexInfo/settings.json")
+                Text("设置保存在应用支持目录")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

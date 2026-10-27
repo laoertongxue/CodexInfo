@@ -20,11 +20,11 @@ extension ResetRadarService: ResetRadarProviding {}
 /// and is reported as an error in the freshness, so the panel shows the gap
 /// instead of a number that looks real.
 public actor SnapshotBuilder {
-    /// The number of recent turns that are compared with the baseline.
+    /// The number of recent turns handed to the analyzer.
     ///
-    /// The degradation analyzer judges the persistence of a signal over the
-    /// last three turns, so the builder hands over the three newest ones.
-    static let currentTurnCount = 3
+    /// The analyzer compares the last five comparable turns and needs a few
+    /// extra turns to replace short or tool-heavy ones.
+    static let currentTurnCount = 8
 
     private let quota: any QuotaSnapshotProviding
     private let credits: any ResetCreditsProviding

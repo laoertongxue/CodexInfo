@@ -68,4 +68,4 @@ jobs:
         run: bash scripts/build-app.sh
 
       - name: Verify the signature of the bundle
-        run: codesign --verify --deep --strict dist/CodexInfo.app
+        run: codesign --verify --deep --strict dist/AI-UseInfo.app

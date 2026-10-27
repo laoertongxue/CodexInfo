@@ -4,11 +4,12 @@ import { useHost } from "./host/useHost";
 import type { ClientUsageSnapshot, DataState, HealthStatus, OpenCodeUsage, ResetSignal, SourceState, UsageSnapshot } from "./data/types";
 import type { Host } from "./host/types";
 
-/** The four local verdicts of the model health. */
+/** The local performance verdicts of the model health. */
 const HEALTH_LABEL: Record<HealthStatus, string> = {
   normal: "正常",
-  suspected: "疑似降智",
-  degraded: "已降智（本地判定）",
+  suspected: "性能异常",
+  degraded: "性能异常（多项）",
+  route: "路由降档",
   insufficient: "数据不足",
 };
 
@@ -785,13 +786,15 @@ function CodexPanel({
             </button>
           </div>
           <div className="tiny muted">
-            {sessionUsable ? formatRate(session.outputTokensPerSecond) : DASH} · 首 token{" "}
-            {sessionUsable && session.ttftMs ? `${(session.ttftMs / 1000).toFixed(1)}s` : DASH} · {health.sampleTurns} 轮基线
+            {sessionUsable && session.outputTokensPerSecond != null
+              ? `${formatRate(session.outputTokensPerSecond)} · `
+              : ""}
+            {sessionUsable && session.ttftMs
+              ? `首 token ${(session.ttftMs / 1000).toFixed(1)}s · `
+              : ""}
+            {health.recentTurns ?? 5} 轮近期 / {health.sampleTurns} 轮基线
           </div>
-          <div className="tiny muted" data-testid="health-disclaimer">
-            {health.disclaimer}
-          </div>
-          {healthOpen && (
+          {healthOpen && health.signals.length > 0 && (
             <div className="evidence" id="health-evidence" data-testid="health-evidence">
               <div className="tiny muted">
                 基线：近 {health.baselineWindowDays} 天 · {health.model ?? DASH} · {health.effort ?? DASH}

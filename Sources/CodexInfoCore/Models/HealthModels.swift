@@ -1,13 +1,18 @@
 import Foundation
 
-/// The four-state local model-health verdict.
+/// The local model-health verdict.
 ///
-/// The verdict only reflects this machine's own history. It is never an
-/// official statement about the upstream model.
+/// The verdict describes this machine's performance and route. It is not a
+/// statement about the model's capability: a local monitor cannot measure IQ
+/// without a fixed task set.
 public enum HealthStatus: String, Codable, Equatable, Sendable {
     case normal
+    /// A performance anomaly was observed.
     case suspected
+    /// More than one performance metric moved together.
     case degraded
+    /// The actual route is a comparable downgrade of the selected one.
+    case route
     case insufficient
 }
 
@@ -51,6 +56,8 @@ public struct HealthSnapshot: Codable, Equatable, Sendable {
     public let status: HealthStatus
     public let baselineWindowDays: Int
     public let sampleTurns: Int
+    /// The number of recent turns behind the verdict; older payloads omit it.
+    public let recentTurns: Int?
     public let model: String?
     public let effort: String?
     public let signals: [HealthSignal]
@@ -60,6 +67,7 @@ public struct HealthSnapshot: Codable, Equatable, Sendable {
         status: HealthStatus,
         baselineWindowDays: Int,
         sampleTurns: Int,
+        recentTurns: Int? = nil,
         model: String?,
         effort: String?,
         signals: [HealthSignal],
@@ -68,6 +76,7 @@ public struct HealthSnapshot: Codable, Equatable, Sendable {
         self.status = status
         self.baselineWindowDays = baselineWindowDays
         self.sampleTurns = sampleTurns
+        self.recentTurns = recentTurns
         self.model = model
         self.effort = effort
         self.signals = signals
@@ -78,14 +87,15 @@ public struct HealthSnapshot: Codable, Equatable, Sendable {
         status: .insufficient,
         baselineWindowDays: 7,
         sampleTurns: 0,
+        recentTurns: 0,
         model: nil,
         effort: nil,
         signals: [],
-        disclaimer: "基于本机近 7 天基线，不代表官方结论"
+        disclaimer: "仅比较本机性能与路由，不判断模型能力"
     )
 }
 
-/// The thresholds of the abnormal signals.
+/// The thresholds of the abnormal performance signals.
 ///
 /// The standard tier matches the design thresholds; the conservative tier
 /// only tightens the speed and time-to-first-token ratios.
@@ -93,30 +103,22 @@ public struct HealthThresholds: Equatable, Sendable {
     public let rateRatio: Double
     public let ttftRatio: Double
     public let ttftDeltaMs: Double
-    public let reasoningRatio: Double
-    public let toolDensityRatio: Double
 
     public init(
         rateRatio: Double,
         ttftRatio: Double,
-        ttftDeltaMs: Double,
-        reasoningRatio: Double,
-        toolDensityRatio: Double
+        ttftDeltaMs: Double
     ) {
         self.rateRatio = rateRatio
         self.ttftRatio = ttftRatio
         self.ttftDeltaMs = ttftDeltaMs
-        self.reasoningRatio = reasoningRatio
-        self.toolDensityRatio = toolDensityRatio
     }
 
     public static let standard = HealthThresholds(
-        rateRatio: 0.7, ttftRatio: 2.0, ttftDeltaMs: 2_000,
-        reasoningRatio: 0.5, toolDensityRatio: 0.6
+        rateRatio: 0.7, ttftRatio: 2.0, ttftDeltaMs: 2_000
     )
     public static let conservative = HealthThresholds(
-        rateRatio: 0.6, ttftRatio: 3.0, ttftDeltaMs: 3_000,
-        reasoningRatio: 0.5, toolDensityRatio: 0.6
+        rateRatio: 0.6, ttftRatio: 3.0, ttftDeltaMs: 3_000
     )
 }
 
